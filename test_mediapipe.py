@@ -17,6 +17,7 @@ MediaPipe FaceMesh 웹캠 인식 테스트 스크립트
 import cv2
 import mediapipe as mp
 import time
+from collections import deque
 
 # ---------- MediaPipe 설정 ----------
 mp_face_mesh = mp.solutions.face_mesh
@@ -41,6 +42,13 @@ if not cam.isOpened():
     print("[오류] 웹캠을 열 수 없습니다. 다른 프로그램이 웹캠을 쓰고 있는지, 카메라 권한이 켜져있는지 확인하세요.")
     exit()
 
+# 카메라에 높은 FPS를 요청 (카메라/드라이버가 지원하는 한도 내에서만 적용됨)
+cam.set(cv2.CAP_PROP_FPS, 120)
+# 일부 웹캠은 MJPG 코덱으로 바꿔야 고FPS가 열림 (기본 YUY2는 고FPS에서 대역폭 부족한 경우가 많음)
+cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+
+reported_fps = cam.get(cv2.CAP_PROP_FPS)
+print(f"[안내] 카메라가 보고하는 설정 FPS: {reported_fps:.0f} (실제 측정치는 화면의 FPS 표시를 참고하세요)")
 print("[안내] 웹캠 인식 테스트 시작. 'q' 눌러서 종료, 's' 눌러서 스크린샷 저장.")
 
 # ---------- 통계용 변수 ----------
@@ -48,6 +56,11 @@ total_frames = 0
 detected_frames = 0
 prev_time = time.time()
 detection_rate = 0.0
+
+# FPS는 매 프레임 값이 들쭉날쭉하므로 최근 N프레임 평균으로 안정화
+# (이 숫자는 'FPS 표시를 얼마나 부드럽게 보여줄지'를 정할 뿐, 실제 FPS 상한과는 무관합니다)
+fps_history = deque(maxlen=15)
+smoothed_fps = 0
 
 while True:
     success, frame = cam.read()
@@ -62,10 +75,12 @@ while True:
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb_frame)
 
-    # ---------- FPS 계산 ----------
+    # ---------- FPS 계산 (최근 30프레임 이동평균으로 안정화) ----------
     curr_time = time.time()
-    fps = 1 / (curr_time - prev_time) if curr_time != prev_time else 0
+    instant_fps = 1 / (curr_time - prev_time) if curr_time != prev_time else 0
     prev_time = curr_time
+    fps_history.append(instant_fps)
+    smoothed_fps = sum(fps_history) / len(fps_history)
 
     face_detected = results.multi_face_landmarks is not None
 
@@ -102,9 +117,22 @@ while True:
     detection_rate = (detected_frames / total_frames) * 100 if total_frames > 0 else 0
 
     cv2.putText(frame, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-    cv2.putText(frame, f"FPS: {fps:.1f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    cv2.putText(frame, f"Detection rate: {detection_rate:.1f}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(frame, f"Detection rate: {detection_rate:.1f}%", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     cv2.putText(frame, "q: quit  s: screenshot", (10, frame_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+    # ---------- FPS 표시 (우측 상단, 크게, 상태에 따라 색상 변경) ----------
+    # 눈동자 추적처럼 실시간성이 중요한 작업은 대략 20~30 FPS는 나와야 부드럽게 느껴짐
+    if smoothed_fps >= 25:
+        fps_color = (0, 255, 0)      # 초록: 원활함
+    elif smoothed_fps >= 15:
+        fps_color = (0, 255, 255)    # 노랑: 다소 느림
+    else:
+        fps_color = (0, 0, 255)      # 빨강: 너무 느림
+
+    fps_text = f"{smoothed_fps:.0f} FPS"
+    (text_w, text_h), _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
+    cv2.putText(frame, fps_text, (frame_w - text_w - 15, text_h + 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, fps_color, 2)
 
     cv2.imshow("MediaPipe Recognition Test", frame)
 
