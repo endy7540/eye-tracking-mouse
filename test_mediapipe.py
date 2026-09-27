@@ -2,6 +2,7 @@
 MediaPipe FaceMesh 웹캠 인식 테스트 스크립트
 ----------------------------------------
 목적: 웹캠 영상에서 MediaPipe가 얼굴/눈동자(iris)를 제대로 인식하는지 확인.
+(팀 결정에 따라 mediapipe==0.10.21 레거시 API 기준으로 되돌린 버전입니다.)
 
 확인하는 것:
 1. 웹캠이 정상적으로 열리는지
@@ -31,9 +32,12 @@ face_mesh = mp_face_mesh.FaceMesh(
     min_tracking_confidence=0.5,
 )
 
-# 왼쪽/오른쪽 눈동자 중심 랜드마크 인덱스 (refine_landmarks=True일 때)
-LEFT_IRIS_CENTER = 473
-RIGHT_IRIS_CENTER = 468
+# 화면(거울모드)에 보이는 위치 기준 라벨.
+# MediaPipe 인덱스 468은 인체 기준 "오른쪽 눈"이지만, 거울모드로 좌우 반전하면
+# 화면에는 왼쪽에 나타난다 (gaze_tracker.py의 EYE_R 주석 참고). 여기서는
+# 화면을 보는 사람이 헷갈리지 않도록 "화면에 보이는 위치" 기준으로 L/R을 붙인다.
+SCREEN_LEFT_IRIS = 468   # 화면 왼쪽에 표시됨 (인체 기준 오른쪽 눈)
+SCREEN_RIGHT_IRIS = 473  # 화면 오른쪽에 표시됨 (인체 기준 왼쪽 눈)
 
 # ---------- 웹캠 열기 ----------
 cam = cv2.VideoCapture(0)
@@ -57,8 +61,6 @@ detected_frames = 0
 prev_time = time.time()
 detection_rate = 0.0
 
-# FPS는 매 프레임 값이 들쭉날쭉하므로 최근 N프레임 평균으로 안정화
-# (이 숫자는 'FPS 표시를 얼마나 부드럽게 보여줄지'를 정할 뿐, 실제 FPS 상한과는 무관합니다)
 fps_history = deque(maxlen=15)
 smoothed_fps = 0
 
@@ -75,7 +77,7 @@ while True:
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb_frame)
 
-    # ---------- FPS 계산 (최근 30프레임 이동평균으로 안정화) ----------
+    # ---------- FPS 계산 (최근 프레임 이동평균으로 안정화) ----------
     curr_time = time.time()
     instant_fps = 1 / (curr_time - prev_time) if curr_time != prev_time else 0
     prev_time = curr_time
@@ -97,10 +99,10 @@ while True:
             connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style(),
         )
 
-        # 양쪽 눈동자 중심에 큰 점 찍기 (실제 추적에 쓸 좌표)
+        # 양쪽 눈동자 중심에 큰 점 찍기 (화면에 보이는 위치 기준 L/R)
         for idx, color, label in [
-            (LEFT_IRIS_CENTER, (0, 255, 0), "L"),
-            (RIGHT_IRIS_CENTER, (0, 200, 255), "R"),
+            (SCREEN_LEFT_IRIS, (0, 255, 0), "L"),
+            (SCREEN_RIGHT_IRIS, (0, 200, 255), "R"),
         ]:
             lm = landmarks[idx]
             x, y = int(lm.x * frame_w), int(lm.y * frame_h)
@@ -121,7 +123,6 @@ while True:
     cv2.putText(frame, "q: quit  s: screenshot", (10, frame_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     # ---------- FPS 표시 (우측 상단, 크게, 상태에 따라 색상 변경) ----------
-    # 눈동자 추적처럼 실시간성이 중요한 작업은 대략 20~30 FPS는 나와야 부드럽게 느껴짐
     if smoothed_fps >= 25:
         fps_color = (0, 255, 0)      # 초록: 원활함
     elif smoothed_fps >= 15:
