@@ -12,10 +12,9 @@ class LowPassFilter:
         if self.s is None:
             self.s = value
         else:
-            s = alpha * value + (1.0 - alpha) * self.s
+            self.s = alpha * value + (1.0 - alpha) * self.s
         self.y = value
-        self.s = s
-        return s
+        return self.s
 
 # 원유로 필터 입력값의 변화량에 따라 컷오프 주파수를 조절
 class OneEuroFilter1D:
