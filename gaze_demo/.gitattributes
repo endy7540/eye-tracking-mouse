@@ -1,0 +1,2 @@
+# .bat 파일은 윈도우 줄바꿈(CRLF)을 유지해야 제대로 실행됨
+*.bat text eol=crlf
