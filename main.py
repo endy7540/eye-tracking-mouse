@@ -42,24 +42,24 @@ MOUSE_SETTLE_PX = 15        # 클릭 직전 0.12초 동안은 거의 멈춰 있�
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-import theme
-from gaze_core import GazeSession, save_calibration, load_calibration
-from adaptive import AdaptiveCalibrator, left_button_down
-from clicker import (WinkDetector, DwellClicker, BlinkGesture, click_at, WINK_EYES, BLINK_COUNT,
-                     BACK_COUNT)
-from text_sender import send_back
-from status_window import StatusWindow
+from ui import theme
+from vision.gaze_core import GazeSession, save_calibration, load_calibration
+from calibration.adaptive import AdaptiveCalibrator, left_button_down
+from control.clicker import (WinkDetector, DwellClicker, BlinkGesture, click_at, WINK_EYES, BLINK_COUNT,
+                             BACK_COUNT)
+from control.text_sender import send_back
+from ui.status_window import StatusWindow
 import json
 from pathlib import Path
 
-SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"   # 윙크 눈·응시 클릭 설정 (다음 실행에도 유지)
-WINK_CYCLE = ["both", "left", "right", "off"]                        # 메뉴 윙크 버튼을 누를 때마다 이 순서로 바뀜
-from gaze_widgets import GazeInteraction
-from mole_calibration import MoleCalibrationWindow
-from seal_cursor import SealCursorOverlay
-from magnifier import Magnifier, MAX_LEVEL
-from menu_bar import MenuDock, MenuPanel, anchor_bottom_right
-from onscreen_keyboard import OnScreenKeyboard
+SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
+WINK_CYCLE = ["both", "left", "right", "off"]
+from ui.gaze_widgets import GazeInteraction
+from calibration.mole_calibration import MoleCalibrationWindow
+from ui.seal_cursor import SealCursorOverlay
+from ui.magnifier import Magnifier, MAX_LEVEL
+from ui.menu_bar import MenuDock, MenuPanel, anchor_bottom_right
+from ui.onscreen_keyboard import OnScreenKeyboard
 
 
 class DemoApp(QtCore.QObject):
@@ -137,7 +137,7 @@ class DemoApp(QtCore.QObject):
             self.mouse_timer = QtCore.QTimer(self)
             self.mouse_timer.timeout.connect(self._on_mouse_tick)
         else:
-            from camera_worker import CameraWorker      # 마우스 모드에선 mediapipe를 불러오지 않음
+            from vision.camera_worker import CameraWorker      # 마우스 모드에선 mediapipe를 불러오지 않음
             self.worker = CameraWorker(args.camera, args.hd)
             self.worker.frame_ready.connect(self._on_frame)
             self.worker.camera_error.connect(self._on_camera_error)

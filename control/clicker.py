@@ -194,7 +194,7 @@ def click_at(x, y):
     if sys.platform != "win32":
         return
     import ctypes
-    from text_sender import INPUT, _INPUTUNION, MOUSEINPUT, _user32
+    from control.text_sender import INPUT, _INPUTUNION, MOUSEINPUT, _user32
     LEFTDOWN, LEFTUP = 0x0002, 0x0004
     events = [INPUT(type=0, u=_INPUTUNION(mi=MOUSEINPUT(0, 0, 0, flag, 0, 0))) for flag in (LEFTDOWN, LEFTUP)]
     arr = (INPUT * 2)(*events)

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .vscode/
 .DS_Store
+wink_events.log
+calibration.npz
