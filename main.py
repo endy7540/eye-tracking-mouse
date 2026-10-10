@@ -137,7 +137,7 @@ class DemoApp(QtCore.QObject):
             self.mouse_timer = QtCore.QTimer(self)
             self.mouse_timer.timeout.connect(self._on_mouse_tick)
         else:
-            from camera_worker import CameraWorker      # 마우스 모드에선 mediapipe를 불러오지 않음
+            from vision.camera_worker import CameraWorker      # 마우스 모드에선 mediapipe를 불러오지 않음
             self.worker = CameraWorker(args.camera, args.hd)
             self.worker.frame_ready.connect(self._on_frame)
             self.worker.camera_error.connect(self._on_camera_error)
