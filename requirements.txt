@@ -3,3 +3,4 @@ mediapipe==0.10.21
 pyautogui
 numpy
 pillow
+PyQt5
