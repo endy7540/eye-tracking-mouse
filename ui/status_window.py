@@ -8,13 +8,18 @@ status_window.py — 메뉴 "상태 확인"으로 여는 창 (화면 왼쪽 위)
     - 보정 상태: 처음 캘리브레이션 오차, 자동 보정 샘플 수, 최근 마우스 클릭 기준 실제 오차
 
 창 안의 값은 main.py가 넘겨주는 get_state()로 0.15초마다 새로 읽습니다.
+
+[모듈화] ui 폴더 안 파일은 "from . import theme"처럼 점(.)을 붙여 불러오고,
+         다른 담당 폴더(control/)의 파일은 "from control.clicker import ..."처럼 폴더 이름부터 씁니다.
+[개발용] 이 창은 개발할 때만 쓰고 제출할 때는 메뉴에서 버튼을 숨깁니다 (menu_bar.py의 SHOW_STATUS_BUTTON).
+         색은 테마와 상관없이 갈색 그대로입니다 (테마는 메뉴·아이콘·커서에만 적용).
 """
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-import theme
-from clicker import WINK_CLOSE, WINK_OPEN, BLINK_COUNT, BACK_COUNT
-from gaze_widgets import CloseButton, setup_floating_window
-from menu_bar import paint_panel_background
+from . import theme
+from control.clicker import WINK_CLOSE, WINK_OPEN, BLINK_COUNT, BACK_COUNT
+from .gaze_widgets import CloseButton, setup_floating_window
+from .menu_bar import paint_panel_background
 
 WINK_LABEL = {"both": "아무 쪽 눈", "left": "왼눈", "right": "오른눈", "off": "끔"}
 
