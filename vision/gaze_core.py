@@ -12,14 +12,24 @@ gaze_core.py — 원본 gaze_tracker.py 중 "캘리브레이션 + 시선 좌표 
     데모: predict_norm()이 0~1 비율 좌표를 돌려주고, 화면 크기는 Qt 쪽에서 곱합니다.
 pyautogui를 import하면 Windows에서 프로그램 전체의 화면 배율(DPI) 처리 방식이 바뀌어
 PyQt 창들의 좌표가 어긋날 수 있어서, 데모에서는 pyautogui를 아예 쓰지 않습니다.
-나머지 함수(eye_feature, estimate_head_pose, extract_features, design, fit,
-FeatureSmoother, Smoother)는 원본 그대로입니다.
+나머지 함수(eye_feature, estimate_head_pose, extract_features, design, fit)는 원본 그대로입니다.
+
+[필터 구조 — 이어서 작업하는 사람/AI 참고]
+스무딩/필터는 모두 filter_pipeline/filter.py 에 있습니다 (가중치·켜기/끄기도 그 파일의 DEFAULT_PARAMS).
+  - 예전에 이 파일에 있던 FeatureSmoother, Smoother 는 filter.py 로 옮겼습니다.
+  - GazeSession 이 필터를 직접 만들고 process() 안에서 호출하므로, main.py 에는 필터 코드가 없습니다.
+  - 의존 방향은 gaze_core → filter.py 한 방향입니다. filter.py 가 이 파일을 import 하면 안 됩니다.
 """
 import math
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+# 필터는 filter_pipeline/filter.py 에서 관리한다 (프로젝트 폴더에서 `python main.py` 로 실행하면 import 됨).
+# FeatureSmoother, Smoother 는 예전에 이 파일에 있었으므로, 기존 코드의
+# `from vision.gaze_core import Smoother` 같은 import 가 깨지지 않도록 여기서 다시 노출한다.
+from filter_pipeline.filter import FeatureSmoother, GazeStabilizer, Smoother  # noqa: F401
 
 # 실행한 폴더(cmd 위치)가 아니라 이 파이썬 파일이 있는 폴더에 저장/불러오기 → 어디서 실행해도 같은 파일 사용
 CALIB_FILE = Path(__file__).resolve().parent / "calibration.npz"
@@ -279,50 +289,7 @@ def predict_px(W, f, screen_w, screen_h):
     return predict_norm(W, f) * np.array([screen_w, screen_h])
 
 
-class FeatureSmoother:
-    """
-    고개 위치(nx, ny)만 지수평활(EMA)로 부드럽게 만들고, 실제 시선 신호(hx, vy)는
-    그대로 통과시킨다. hx/vy까지 여기서 스무딩하면 화면 좌표 단계의 Smoother와
-    이중으로 감쇠되는데, 위아래(vy)는 원래 좌우(hx)보다 신호 진폭이 작아서
-    이중 스무딩에 특히 취약하다 (좌우는 멀쩡한데 위아래만 둔해지는 원인이었음).
-    """
-
-    def __init__(self, alpha=0.35):
-        self.alpha = alpha
-        self.prev_head = None
-
-    def __call__(self, f):
-        hx, vy, nx, ny, op, pitch, yaw = f
-        head = np.array([nx, ny, pitch, yaw])
-        if self.prev_head is None:
-            self.prev_head = head.copy()
-        else:
-            self.prev_head = self.prev_head + self.alpha * (head - self.prev_head)
-        nx_s, ny_s, pitch_s, yaw_s = self.prev_head
-        return np.array([hx, vy, nx_s, ny_s, op, pitch_s, yaw_s])
-
-
-class Smoother:
-    """
-    움직임이 작을 땐 강하게, 클 땐 약하게 평활화 (떨림 억제 + 빠른 추종).
-    화면 가로/세로 크기로 정규화한 거리를 사용 — 세로가 가로보다 짧다는 이유만으로
-    위아래 움직임이 상대적으로 더 강하게 뭉개지는 것을 방지한다.
-    (원본은 SCREEN_W/H를 직접 썼고, 데모는 화면 크기를 인자로 받는다)
-    """
-
-    def __init__(self, screen_w, screen_h, min_a=0.05, max_a=0.55, dist=0.065):
-        self.min_a, self.max_a, self.dist = min_a, max_a, dist
-        self.prev = None
-        self.scale = np.array([screen_w, screen_h], dtype=float)
-
-    def __call__(self, p):
-        if self.prev is None:
-            self.prev = p
-            return p
-        d = np.linalg.norm((p - self.prev) / self.scale)   # 0~1 정규화 거리
-        a = self.min_a + (self.max_a - self.min_a) * min(d / self.dist, 1.0)
-        self.prev = self.prev + a * (p - self.prev)
-        return self.prev
+# FeatureSmoother, Smoother 클래스는 filter_pipeline/filter.py 로 옮겼습니다 (위 import 참고).
 
 
 class GazeSession:
@@ -337,11 +304,15 @@ class GazeSession:
         self.ranges = ranges          # 특징값 허용 범위 (clip_feature)
         self.adaptive = adaptive      # 자동 보정기 (adaptive.py) — 눈 뜬 프레임을 계속 넘겨줌
         self.screen_w, self.screen_h = screen_w, screen_h
-        self.feat_smoother = FeatureSmoother()
-        self.smoother = Smoother(screen_w, screen_h)
+        # ── 필터 (정의·가중치는 모두 filter_pipeline/filter.py) ──
+        self.feat_smoother = FeatureSmoother()                  # 머리 위치 특징값 스무딩
+        self.stabilizer = GazeStabilizer(fps=30)                # 화면 좌표 안정화 (주력). 가중치: DEFAULT_PARAMS
+        self.stabilizer.set_screen_size(screen_w, screen_h)     #   이상치 거리를 화면 대각선 비율로 계산
+        self.smoother = Smoother(screen_w, screen_h)            # 기존 스무딩 (예비용). stabilizer.enabled=False 일 때만 사용
+        # 세션이 새로 만들어질 때마다(재캘리브레이션 등) 필터도 새로 만들어지므로 상태는 자동으로 초기화된다.
 
     def set_model(self, W, ranges):
-        """자동 보정으로 새로 학습된 W와 범위로 교체 (커서 위치는 Smoother가 부드럽게 이어줌)."""
+        """자동 보정으로 새로 학습된 W와 범위로 교체 (커서 위치는 화면 좌표 필터가 부드럽게 이어줌)."""
         self.W, self.ranges = W, ranges
 
     def process(self, feat, opens, t=None):
@@ -352,10 +323,13 @@ class GazeSession:
             return None
         if self.adaptive is not None and t is not None:
             self.adaptive.add_frame(t, feat)      # 클릭 순간 "직전에 어디를 보고 있었는지" 찾을 수 있도록 보관
-        smoothed_feat = clip_feature(self.feat_smoother(feat), self.ranges)
-        raw = np.clip(predict_px(self.W, smoothed_feat, self.screen_w, self.screen_h),
+        smoothed_feat = clip_feature(self.feat_smoother(feat), self.ranges)       # 1) 머리 위치 특징값 스무딩
+        raw = np.clip(predict_px(self.W, smoothed_feat, self.screen_w, self.screen_h),   # 2) 좌표 매핑 → 화면 픽셀
                       [0, 0], [self.screen_w - 1, self.screen_h - 1])
-        return self.smoother(raw)
+        if self.stabilizer.enabled:                                               # 3) 화면 좌표 필터
+            x, y = self.stabilizer.update(raw[0], raw[1], t)                      #    주력: 이상치 제거 + One Euro + EMA
+            return np.array([x, y])
+        return self.smoother(raw)                                                 #    예비: 기존 방식 (enabled=False 일 때)
 
 
 def save_calibration(W, base, extra=None):
