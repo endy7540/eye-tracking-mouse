@@ -10,6 +10,12 @@ MenuDock  (평소에 떠 있는 메뉴 아이콘)
     - 일시정지 중에는 자물쇠로 바뀌고 항상 보임 (커서가 숨겨져서 다가가는 걸 알 수 없으므로).
       자물쇠를 3초 바라보면 다시 활성화
     - 화면 전체 확대 중에는 보이는 영역의 오른쪽 아래에 붙고, 확대돼도 원래 크기로 보이게 작게 그림 (set_view)
+    - 아이콘 바로 왼쪽: 스크롤 모드 ON/OFF 토글 (ScrollToggle). 아이콘과 달리 항상 보임 (메뉴창을 열어도).
+      누르면(클릭 또는 1.2초 응시) scroll_toggle_requested 신호 → main.py가 켜고 끈 뒤 set_scroll()로 표시를 맞춤.
+      (스크롤 영역은 화면 위·아래 15%이고, 메뉴 아이콘·토글이 있는 오른쪽 아래 칸은 스크롤 영역에서 빠져 있음)
+    - 메뉴창이 열려 있는 동안(set_menu_open(True))은 아이콘·상태 글자만 숨기고 토글은 그대로 둠.
+      메뉴창은 화면 아래쪽에 토글 자리(BOTTOM_RESERVE)를 비워 두고 크기를 정하므로 둘이 겹치지 않음.
+    - 상태 글자는 아이콘 바로 위에 나타남 (아이콘 왼쪽은 토글 자리)
 
 MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
     - 오른쪽 위 X 버튼(크롬 창처럼): 메뉴창 닫기
@@ -52,6 +58,10 @@ ICON_PX = 110             # 메뉴 아이콘 지름 (예전 76px보다 크게)
 NEAR_PX = 170             # 커서가 아이콘 중심에서 이 거리 안이면 완전히 보임
 FAR_PX = 380              # 이 거리 밖이면 완전히 투명 (사이에서는 서서히)
 INTRO_SEC = 3.0           # 아이콘이 처음 나타날 때 이 시간 동안은 보여줌 (어디 있는지 알 수 있게)
+SCROLL_W, SCROLL_H = 210, 64   # 스크롤 ON/OFF 토글 크기 (메뉴 아이콘 왼쪽)
+SCROLL_GAP = 14           # 토글과 메뉴 아이콘 사이 간격
+# 메뉴창이 화면 아래쪽에 비워 둘 높이 = 토글 윗부분까지 + 여유 (메뉴창과 토글이 겹치지 않게)
+BOTTOM_RESERVE = EDGE_MARGIN + ICON_PX / 2 + SCROLL_H / 2 + 12
 
 PANEL_BG_ALPHA = 0.30     # 메뉴창 배경 진하기 (많이 투명하게 — 뒤 화면이 비쳐 보임)
 CARD_BG = QtGui.QColor(255, 255, 255, 205)   # 카드 바탕 (뒤가 비쳐도 글씨가 읽히게 흰색 반투명)
@@ -558,7 +568,8 @@ class MenuPanel(QtWidgets.QWidget):
     def _relayout(self):
         """화면 크기에 맞춰 메뉴창 크기(s 배율)와 안쪽 부품 위치를 정함. 1920×1080에서 s = 1."""
         area = QtWidgets.QApplication.primaryScreen().availableGeometry()
-        s = min(area.width() * 0.94 / BASE_W, area.height() * 0.92 / BASE_H, 1.0)
+        s = min(area.width() * 0.94 / BASE_W, area.height() * 0.92 / BASE_H,
+                (area.height() - 2 * BOTTOM_RESERVE) / BASE_H, 1.0)    # 아래쪽 스크롤 토글과 겹치지 않게
         s = max(s, 0.45)
         self.s = s
         W, H = int(BASE_W * s), int(BASE_H * s)
@@ -685,6 +696,63 @@ class MenuPanel(QtWidgets.QWidget):
 
 
 # ── 메뉴 아이콘 (오른쪽 아래) ─────────────────────────────────────────────
+class ScrollToggle(GazeButton):
+    """메뉴 아이콘 위 스크롤 모드 ON/OFF 토글 (항상 보임).
+    [↕ 스크롤  (스위치)] 모양. 켜짐 = 테마색 바탕 + 흰 글자 + 스위치 동그라미 오른쪽,
+    꺼짐 = 흰색 반투명 바탕 + 진한 글자 + 회색 스위치 동그라미 왼쪽."""
+
+    def __init__(self, parent):
+        super().__init__("", parent)
+        self.setFixedSize(SCROLL_W, SCROLL_H)
+        self.setToolTip("스크롤 모드 켜기/끄기")
+
+    def paintEvent(self, event):
+        th = theme.current()
+        s = self.width() / SCROLL_W              # 화면 전체 확대 중에는 작게 그려짐
+        on = self.on
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        r = QtCore.QRectF(self.rect()).adjusted(3 * s, 3 * s, -3 * s, -3 * s)
+        h, cy = r.height(), r.center().y()
+        hl = self.is_highlighted()
+        p.setPen(QtGui.QPen(th["deep"] if hl else theme.with_alpha(th["main"], 0.8), (5 if hl else 2.5) * s))
+        p.setBrush(theme.with_alpha(th["main"], 0.92) if on else QtGui.QColor(255, 255, 255, 230))
+        p.drawRoundedRect(r, h / 2, h / 2)
+        ink = QtGui.QColor(255, 255, 255) if on else th["deep"]
+
+        # 위아래 화살표 (↕)
+        ax = r.left() + 28 * s
+        p.setPen(_pen(ink, 3.5 * s))
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(ax - 7 * s, cy - 5 * s), QtCore.QPointF(ax, cy - 12 * s),
+                                        QtCore.QPointF(ax + 7 * s, cy - 5 * s)]))
+        p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(ax - 7 * s, cy + 5 * s), QtCore.QPointF(ax, cy + 12 * s),
+                                        QtCore.QPointF(ax + 7 * s, cy + 5 * s)]))
+        # 글자
+        p.setPen(ink)
+        p.setFont(theme.ui_font(20 * s))
+        p.drawText(QtCore.QRectF(r.left() + 44 * s, r.top(), 76 * s, h),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, "스크롤")
+        # 스위치 (안에 ON/OFF 글자)
+        sw = QtCore.QRectF(r.right() - 10 * s - 74 * s, cy - 19 * s, 74 * s, 38 * s)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(th["deep"] if on else OFF_GRAY)
+        p.drawRoundedRect(sw, 19 * s, 19 * s)
+        p.setBrush(QtGui.QColor(255, 255, 255))
+        p.drawEllipse(QtCore.QPointF(sw.right() - 19 * s if on else sw.left() + 19 * s, cy), 15 * s, 15 * s)
+        p.setPen(QtGui.QColor(255, 255, 255))
+        p.setFont(theme.ui_font(14 * s))
+        label = QtCore.QRectF(sw.left() + 4 * s, sw.top(), 34 * s, sw.height()) if on else \
+            QtCore.QRectF(sw.left() + 34 * s, sw.top(), 38 * s, sw.height())
+        p.drawText(label, QtCore.Qt.AlignCenter, "ON" if on else "OFF")
+        # 바라보는 동안 아래쪽에 진행 선
+        if self.progress > 0:
+            p.setPen(_pen(QtGui.QColor(255, 255, 255) if on else th["deep"], 4 * s))
+            x0 = r.left() + h / 2
+            p.drawLine(QtCore.QPointF(x0, r.bottom() - 6 * s),
+                       QtCore.QPointF(x0 + (r.width() - h) * self.progress, r.bottom() - 6 * s))
+
+
 class MenuIconButton(GazeButton):
     """테마색 둥근 메뉴 아이콘. 평소엔 ≡ 모양, 일시정지 중엔 자물쇠 모양 (+ 바라보는 동안 둘레 게이지).
     alpha(0~1)는 MenuDock이 커서와의 거리로 정해줌 (0 = 완전히 투명)."""
@@ -731,18 +799,22 @@ class MenuIconButton(GazeButton):
 class MenuDock(QtWidgets.QWidget):
     open_requested = QtCore.pyqtSignal()
     unlock_requested = QtCore.pyqtSignal()
+    scroll_toggle_requested = QtCore.pyqtSignal()      # 아이콘 위 스크롤 ON/OFF 토글을 누름
 
     def __init__(self):
         super().__init__()
         setup_floating_window(self)
         self.icon = MenuIconButton(self)
         self.icon.clicked.connect(self._on_icon)
+        self.scroll = ScrollToggle(self)
+        self.scroll.clicked.connect(lambda: self.scroll_toggle_requested.emit())
         self.text = ""
         self.alpha = 1.0                  # 지금 보이는 정도 (0 = 완전히 투명)
         self.gaze = None                  # 마지막 커서 위치 (실제 좌표)
         self.view = None                  # 화면 전체 확대 중일 때 보이는 영역 (None = 확대 안 함)
         self.level = 1
         self.hold_until = 0.0             # 이 시각까지는 커서와 상관없이 보여줌
+        self.menu_open = False            # 메뉴창이 열려 있으면 아이콘·상태 글자를 숨기고 토글만 남김
         self.fade_timer = QtCore.QTimer(self)
         self.fade_timer.timeout.connect(self._step)
         self.fade_timer.start(30)
@@ -767,6 +839,20 @@ class MenuDock(QtWidgets.QWidget):
         self.text = text
         self._relayout()
 
+    def set_scroll(self, on):
+        """스크롤 모드 표시 맞추기 (main.py가 켜고 끈 뒤 호출)."""
+        self.scroll.set_on(on)
+
+    def set_menu_open(self, menu_open):
+        """메뉴창이 열려 있는 동안은 아이콘·상태 글자만 숨기고 스크롤 토글은 그대로 보여줌 (main.py의 _apply_state가 호출)."""
+        if menu_open == self.menu_open:
+            return
+        self.menu_open = menu_open
+        self.icon.setVisible(not menu_open)
+        if not menu_open:
+            self.hold_until = time.time() + INTRO_SEC    # 메뉴창을 닫으면 아이콘 위치를 잠깐 다시 보여줌
+        self.update()
+
     def update_gaze(self, x, y):
         """커서 위치(실제 좌표). 가까울수록 아이콘이 진해짐."""
         self.gaze = (x, y)
@@ -788,6 +874,7 @@ class MenuDock(QtWidgets.QWidget):
     def refresh_theme(self):
         self.update()
         self.icon.update()
+        self.scroll.update()
 
     # ── 배치 ─────────────────────────────────────────────────────
     def _pill_size(self):
@@ -797,25 +884,33 @@ class MenuDock(QtWidgets.QWidget):
         return int(fm.horizontalAdvance(self.text) + 34), 42
 
     def _relayout(self):
-        if self.view is not None:                    # 확대 중: 아이콘만, 1/배율 크기로, 보이는 영역 오른쪽 아래
-            size = max(28, int(ICON_PX / self.level))
+        if self.view is not None:                    # 확대 중: [토글][아이콘], 1/배율 크기로, 보이는 영역 오른쪽 아래
+            k = 1.0 / self.level
+            size = max(28, int(ICON_PX * k))
+            tw, tth, tg = max(50, int(SCROLL_W * k)), max(16, int(SCROLL_H * k)), int(SCROLL_GAP * k)
             self.icon.setFixedSize(size, size)
-            self.icon.move(0, 0)
-            self.setFixedSize(size, size)
+            self.scroll.setFixedSize(tw, tth)
+            w, h = tw + tg + size, size
+            self.setFixedSize(w, h)
+            self.icon.move(w - size, 0)
+            self.scroll.move(0, (size - tth) // 2)
             hx, hy = self.home_center()
             geo = QtWidgets.QApplication.primaryScreen().geometry()
-            cx = self.view.x() + (hx - geo.x()) / self.level
+            cx = self.view.x() + (hx - geo.x()) / self.level     # 아이콘 중심이 와야 할 곳
             cy = self.view.y() + (hy - geo.y()) / self.level
-            self.move(int(cx - size / 2), int(cy - size / 2))
-        else:                                        # 평소: [상태 글자] [아이콘], 오른쪽 아래
+            self.move(int(cx + size / 2 - w), int(cy + size / 2 - h))
+        else:                                        # 평소: 위 [상태 글자] / 아래 [스크롤 토글][아이콘], 오른쪽 아래
             self.icon.setFixedSize(ICON_PX, ICON_PX)
-            pw, _ = self._pill_size()
-            gap = 12 if pw else 0
-            w = pw + gap + ICON_PX
-            self.setFixedSize(w, ICON_PX)
-            self.icon.move(w - ICON_PX, 0)
+            self.scroll.setFixedSize(SCROLL_W, SCROLL_H)
+            pw, ph = self._pill_size()
+            top = ph + 8 if pw else 0                # 상태 글자가 있으면 그 높이만큼 아래 줄을 내림
+            w = max(SCROLL_W + SCROLL_GAP + ICON_PX, pw)
+            h = top + ICON_PX
+            self.setFixedSize(w, h)
+            self.icon.move(w - ICON_PX, top)
+            self.scroll.move(w - ICON_PX - SCROLL_GAP - SCROLL_W, top + (ICON_PX - SCROLL_H) // 2)
             area = QtWidgets.QApplication.primaryScreen().availableGeometry()
-            self.move(area.right() + 1 - EDGE_MARGIN - w, area.bottom() + 1 - EDGE_MARGIN - ICON_PX)
+            self.move(area.right() + 1 - EDGE_MARGIN - w, area.bottom() + 1 - EDGE_MARGIN - h)
         self.update()
 
     # ── 나타나기/사라지기 ────────────────────────────────────────
@@ -842,12 +937,12 @@ class MenuDock(QtWidgets.QWidget):
     def paintEvent(self, event):
         pw, ph = self._pill_size()
         a = self.alpha
-        if self.view is not None or not pw or a <= 0.01:
+        if self.view is not None or self.menu_open or not pw or a <= 0.01:
             return
         th = theme.current()
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        rect = QtCore.QRectF(1, (self.height() - ph) / 2, pw - 2, ph)
+        rect = QtCore.QRectF(self.width() - pw + 1, 1, pw - 2, ph)   # 아이콘 바로 위, 오른쪽 끝 맞춤
         p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.7 * a), 2))
         p.setBrush(QtGui.QColor(255, 255, 255, int(220 * a)))
         p.drawRoundedRect(rect, ph / 2, ph / 2)
