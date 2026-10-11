@@ -15,16 +15,20 @@ onscreen_keyboard.py — 메뉴 "키보드 열기"로 뜨는 화상 키보드
     - 키보드 창은 포커스를 가져가지 않으므로, 받을 프로그램의 입력칸을 먼저 한 번 클릭해 두면 됩니다.
 한글 조합은 hangul.py가 담당합니다. 키보드는 누른 자모를 순서대로 저장만 하고(self.tokens),
 보여줄 때마다 hangul.compose_jamo()로 조합합니다. 그래서 지우기는 "마지막 자모 하나 빼기"입니다.
+
+[모듈화] ui 폴더 안 파일은 "from . import theme"처럼 점(.)을 붙여 불러오고,
+         글자를 보내는 text_sender.py는 제어 담당 폴더라 "from control.text_sender import ..."로 불러옵니다.
+         키보드 색은 테마와 상관없이 갈색 그대로입니다 (테마는 메뉴·아이콘·커서에만 적용).
 """
 import html
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-import theme
-from gaze_widgets import GazeButton, CloseButton, setup_floating_window
-from hangul import compose_jamo, to_keystrokes
-from menu_bar import paint_panel_background
-from text_sender import send_text, activate, foreground_other_window, window_title, make_no_activate
+from . import theme
+from .gaze_widgets import GazeButton, CloseButton, setup_floating_window
+from .hangul import compose_jamo, to_keystrokes
+from .menu_bar import paint_panel_background
+from control.text_sender import send_text, activate, foreground_other_window, window_title, make_no_activate
 
 KEY_DWELL_SEC = 1.0        # 글자키는 메뉴 버튼(1.2초)보다 조금 빠르게
 GAP = 12                   # 키 사이 간격 (일반 키보드보다 넓게)
