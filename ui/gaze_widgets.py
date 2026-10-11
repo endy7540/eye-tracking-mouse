@@ -13,11 +13,16 @@ GazeInteraction
     main.py가 매 프레임 시선 좌표를 update_gaze(x, y, 시각)로 넣어주면,
     1) 지금 시선 아래에 있는 GazeButton을 찾고 (하이라이트 켜기/끄기)
     2) 같은 버튼을 dwell_sec(기본 1.2초) 동안 계속 보면 그 버튼을 click() 합니다.
-    응시 진행률(0~1)과 하이라이트 여부를 신호로 내보내서, 물개 커서가 게이지/테두리를 그립니다.
+    응시 진행률(0~1)과 하이라이트 여부를 신호로 내보내서, 시선 커서가 게이지/테두리를 그립니다.
+
+[모듈화] ui 폴더 안 파일끼리는 "from . import theme"처럼 점(.)을 붙여 불러옵니다.
+         (프로젝트 맨 위 폴더에서 python main.py로 실행할 때 ui 폴더를 하나의 묶음(패키지)으로 찾기 때문)
+GazeButton의 생김새(갈색·주황 테두리)는 화상 키보드·상태 확인 창이 그대로 쓰므로 테마와 상관없이 유지합니다.
+메뉴창의 테마색 카드는 menu_bar.py에서 GazeButton을 물려받아 따로 그립니다.
 """
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-import theme
+from . import theme
 
 DWELL_CLICK_SEC = 1.2       # 버튼을 이만큼 바라보면 클릭 (요구사항: 1~1.5초)
 REPEAT_GAP_SEC = 0.5        # 키보드처럼 '연속 입력'이 되는 버튼은, 한 번 눌린 뒤 이만큼 쉬었다가 다시 채움
