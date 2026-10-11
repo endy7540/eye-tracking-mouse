@@ -92,6 +92,7 @@ class DemoApp(QtCore.QObject):
         if self.wink_mode not in WINK_CYCLE:
             self.wink_mode = "both"
         self.dwell_on = bool(cfg.get("dwell_on", False))  # 응시 클릭: 기본 꺼짐 (읽다가 실수로 눌릴 수 있어서)
+        self.scroll_on = bool(cfg.get("scroll_on", False))  # 스크롤 모드: 기본 꺼짐 (메뉴 아이콘 옆 토글로 켜고 끔)
         theme.set_theme(cfg.get("theme", theme.DEFAULT_THEME))   # 테마 (메뉴·아이콘·커서 색) — 기본: 하늘
         try:
             self.cursor_opacity = float(cfg.get("cursor_opacity", DEFAULT_OPACITY))   # 커서 진하기 (투명도 = 1 - 진하기)
@@ -129,6 +130,7 @@ class DemoApp(QtCore.QObject):
         # 메뉴 버튼 → 실제 동작
         self.dock.open_requested.connect(self.open_panel)
         self.dock.unlock_requested.connect(self.resume)
+        self.dock.scroll_toggle_requested.connect(self.toggle_scroll)
         self.panel.close_requested.connect(self.close_panel)
         self.panel.zoom_in_requested.connect(self.zoom_in)
         self.panel.zoom_out_requested.connect(self.zoom_out)
@@ -280,7 +282,7 @@ class DemoApp(QtCore.QObject):
                 print("[깜빡임] 연속 깜빡임 → 다시 시작")
                 self.resume()
             else:
-                print("[깜빡임] 연속 깜빡임 → x일시정지")
+                print("[깜빡임] 연속 깜빡임 → 일시정지")
                 self.pause()
         if self.wink_mode != "off":
             fired = self.wink.update(opens, self.session.base, t, WINK_EYES[self.wink_mode])
@@ -375,6 +377,12 @@ class DemoApp(QtCore.QObject):
         self._save_settings()
         self._apply_state()
 
+    def toggle_scroll(self):
+        """메뉴 아이콘 옆 스크롤 ON/OFF. 실제 스크롤은 스크롤 담당 코드가 self.scroll_on을 보고 함."""
+        self.scroll_on = not self.scroll_on
+        self._save_settings()
+        self._apply_state()
+
     def toggle_status(self):
         """상태 확인 창 열기/닫기. 열려 있을 때만 카메라 미리보기를 만들어서 평소엔 부담이 없게."""
         show = not self.status_win.isVisible()
@@ -412,7 +420,8 @@ class DemoApp(QtCore.QObject):
         try:
             SETTINGS_FILE.write_text(json.dumps({"wink_mode": self.wink_mode, "dwell_on": self.dwell_on,
                                                  "theme": theme.current_key(),
-                                                 "cursor_opacity": self.cursor_opacity}),
+                                                 "cursor_opacity": self.cursor_opacity,
+                                                 "scroll_on": self.scroll_on}),
                                      encoding="utf-8")
         except Exception as e:
             print("[설정] 저장 실패:", e)
@@ -466,7 +475,6 @@ class DemoApp(QtCore.QObject):
     # ── 메뉴 동작 ─────────────────────────────────────────────────
     def open_panel(self):
         self.panel_open = True
-        self.dock.hide()
         self._apply_state()
         self.panel.show()
         self.panel.place()                      # 화면 가운데에 크게
@@ -559,6 +567,8 @@ class DemoApp(QtCore.QObject):
               "theme": theme.current_key(), "zoom_max": MAX_LEVEL,
               "zoom_kind": "screen" if self.zoomer.available else "lens"}
         self.panel.update_state(st)
+        self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
+        self.dock.set_menu_open(self.panel_open)    # 메뉴창이 열려 있으면 아이콘만 숨기고 토글은 그대로
         if self.zoomer.available:               # 화면 전체 확대
             if self.zoomer.level != self.zoom:  # 처음 확대할 땐 화면 가운데부터, 배율만 바꿀 땐 보던 곳 유지
                 center = (self.geo.x() + self.geo.width() / 2, self.geo.y() + self.geo.height() / 2) if self.zoomer.level == 1 else None
@@ -585,6 +595,8 @@ class DemoApp(QtCore.QObject):
                 parts.append(f"자동 보정 {self.adapt.count}")
             if self.keyboard_open:
                 parts.append("키보드")
+            if self.scroll_on:
+                parts.append("스크롤")
             if not self.mouse_mode:
                 wink_name = {"both": "윙크", "left": "왼눈 윙크", "right": "오른눈 윙크"}.get(self.wink_mode)
                 clicks = [n for n, on in ((wink_name, self.wink_mode != "off"), ("응시", self.dwell_on)) if on]
