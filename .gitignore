@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 wink_events.log
 calibration.npz
+settings.json
