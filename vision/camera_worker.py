@@ -50,7 +50,14 @@ class CameraWorker(QtCore.QThread):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
                 if int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) >= w * 0.9:
                     break
-
+             # 30fps 협상: 웹캠이 더 낮으면 그 값, 더 높으면 30으로 맞춤
+            TARGET_FPS = 30
+            cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+            reported = cap.get(cv2.CAP_PROP_FPS)
+            self.fps = TARGET_FPS if reported <= 0 or reported >= TARGET_FPS else reported
+            min_interval = 0.8 / self.fps   # 이 간격보다 일찍 온 프레임은 처리하지 않음
+            last_t = 0.0
+                    
             # [원본: main()] 카메라 워밍업 — 열자마자 읽으면 실패하는 경우가 있어 잠깐 대기
             for _ in range(30):
                 ok, _ = cap.read()
@@ -80,6 +87,10 @@ class CameraWorker(QtCore.QThread):
                     continue
                 fail_count = 0
                 now = time.time()
+                if now - last_t < min_interval:
+                    continue
+                last_t = now
+                                           
                 if self.preview_on and now - self._last_preview >= self.PREVIEW_INTERVAL:
                     self._last_preview = now
                     feat, opens, pts = extract_features(frame, face_mesh, return_points=True)

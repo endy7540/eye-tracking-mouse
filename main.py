@@ -170,7 +170,7 @@ class DemoApp(QtCore.QObject):
             print("[마우스 테스트 모드] 마우스 위치를 시선 대신 사용합니다.")
         else:
             self.worker.start()
-        saved = load_calibration() if (self.args.skip_calib and not self.mouse_mode) else None
+        saved = load_calibration() if (not self.args.recalibrate and not self.mouse_mode) else None 
         if saved is not None:
             n_on = len(saved["online_feats"])
             print(f"[캘리브레이션] 저장된 calibration.npz를 사용합니다. (자동 보정 샘플 {n_on}개 포함)")
@@ -641,8 +641,8 @@ def main():
     ap.add_argument("--hd", action="store_true",
                     help="웹캠이 720p/1080p를 지원하면 더 높은 해상도로 시도 (기본은 640x480)")
     ap.add_argument("--mouse", action="store_true", help="카메라 없이 마우스로 UI 테스트")
-    ap.add_argument("--skip-calib", action="store_true",
-                    help="저장된 calibration.npz가 있으면 캘리브레이션 건너뜀")
+    ap.add_argument("--recalibrate", action="store_true",
+                    help="저장된 캘리브레이션을 무시하고 처음부터 다시 함")
     args = ap.parse_args()
 
     # 화면 배율(125%, 150%)이 켜진 노트북에서도 창 크기·좌표가 어긋나지 않도록
