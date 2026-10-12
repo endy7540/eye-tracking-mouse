@@ -37,6 +37,13 @@ from vision.gaze_core import (BLINK_THRESHOLD, MARGIN, GRID_ROWS, STABLE_SEC, ST
                        validation_targets, pursuit_pos, fit, predict_norm)
 
 VALIDATE_SEC = VALID_SETTLE_SEC + VALID_COLLECT_SEC   # 검증 두더지 한 마리당 시간 (원본과 동일)
+
+# [추가] 자세 변화 단계: 두더지를 실제로 보고 있는 시간만 세고, 딴 곳을 보는 동안은 원도 안 차고 데이터도 안 모음.
+# 격자+따라 보기로 모은 데이터로 임시 변환식을 만들어, "지금 눈이 가리키는 위치"가 두더지에서 너무 멀면 딴 곳을 보는 걸로 판단.
+POSE_GOOD_SEC = POSE_SEC - POSE_SETTLE_SEC   # 두더지를 이만큼 보면 한 마리 끝 (예전과 같은 양의 데이터)
+POSE_MAX_SEC = 8.0                           # 이 시간이 지나면 못 채워도 다음으로 (무한 대기 방지)
+POSE_GAZE_TOL = 0.22                         # 눈이 가리키는 위치와 두더지 사이 허용 거리 (화면 대각선 대비) — 고개가 움직이는 단계라 넉넉하게
+POSE_PRELIM_MAX_ERR = 0.12                   # 임시 변환식의 학습 오차가 화면 대각선의 이 비율보다 크면 믿을 수 없어서 검사를 건너뜀
 WHACK_ANIM_SEC = 0.65        # 뿅망치 애니메이션 전체 길이
 HIT_AT = 0.45                # 애니메이션 중 이 비율 지점에서 망치가 두더지에 닿음
 SUMMARY_SEC = 3.5            # 결과 화면을 보여주는 시간 (아무 키나 누르면 바로 넘어감)
@@ -170,7 +177,7 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         self.showing_summary = False
         self.summary_t0 = None
         self.last_face_t = time.time()
-        self.bg_pix = None             # 배경 그림 (처음 그릴 때 한 번 만들어 두고 계속 재사용)
+        self.bg_cache = {}             # 단계별 배경 그림 {(배경 종류, 크기): 그림} — 처음 그릴 때 한 번 만들고 재사용
 
         # 실제 캘리브레이션 데이터 (원본 calibrate()의 feats, labels, opens_all)
         self.feats, self.labels, self.opens_all = [], [], []
@@ -179,6 +186,10 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         self.validate_samples = []
         self.val_errors = []
         self.W = self.base = self.train_err = None
+        self._prelim_W = None          # 자세 변화 단계용 임시 변환식 (없으면 '두더지를 보는지' 검사를 안 함)
+        self.pose_good = 0.0           # 자세 변화: 두더지를 실제로 본 시간(초)
+        self.pose_prev_t = None
+        self.pose_looking = True       # 자세 변화: 지금 두더지를 보고 있는지 (고리 색 표시용)
         self.fit_weights = None        # 학습에 쓴 샘플 가중치 — 자동 보정이 두더지 데이터를 기준점으로 다시 쓸 때 필요
 
         self._start_step()
@@ -239,9 +250,43 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         if s["kind"] == "grid":
             self.tracker = (MouseStabilityTracker(self._target_px(s)) if self.mouse_mode
                             else GridStabilityTracker(now))
+        if s["kind"] == "pose":
+            self.pose_good, self.pose_prev_t, self.pose_looking = 0.0, None, True
+            if s["n"] == 1:
+                self._fit_preliminary()
         # [원본 calibrate()] 격자+자세변화가 끝나고 검증이 시작되는 순간 W를 학습
         if s["kind"] == "validate" and s["n"] == 1 and not self.mouse_mode:
             self._fit_model()
+
+    def _fit_preliminary(self):
+        """자세 변화 단계 직전: 지금까지(격자+따라 보기) 모은 데이터로 임시 변환식을 만든다.
+        데이터가 적거나 오차가 크면 None으로 두고, 그때는 예전처럼 시간으로만 진행한다."""
+        self._prelim_W = None
+        if self.mouse_mode or len(self.feats) < 10:
+            return
+        try:
+            counts = Counter(self.groups)
+            weights = np.array([1.0 / counts[g] for g in self.groups])
+            W = fit(self.feats, self.labels, weights=weights)
+            size = [self.width(), self.height()]
+            pred = np.array([predict_norm(W, f) for f in self.feats]) * size
+            true = np.array(self.labels) * size
+            err = float(np.average(np.linalg.norm(pred - true, axis=1), weights=weights))
+        except Exception as e:
+            print("[캘리브레이션] 임시 변환식 실패 — 자세 변화는 시간으로만 진행:", e)
+            return
+        if err <= POSE_PRELIM_MAX_ERR * math.hypot(*size):
+            self._prelim_W = W
+        else:
+            print(f"[캘리브레이션] 임시 변환식 오차가 커서(약 {err:.0f}px) 자세 변화 시선 검사를 건너뜁니다")
+
+    def _pose_gaze_ok(self, feat, s):
+        """자세 변화: 눈이 가리키는 위치가 두더지에서 크게 벗어나지 않았는지. 임시 변환식이 없으면 항상 True."""
+        if self._prelim_W is None:
+            return True
+        pred = predict_norm(self._prelim_W, feat)
+        dx, dy = (pred[0] - s["tx"]) * self.width(), (pred[1] - s["ty"]) * self.height()
+        return math.hypot(dx, dy) <= POSE_GAZE_TOL * math.hypot(self.width(), self.height())
 
     def _fit_model(self):
         if not self.feats:
@@ -307,10 +352,18 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
                 self.groups.append(f"{self.index}-{int(seen_at // PURSUIT_SEGMENT_SEC)}")
         elif s["kind"] == "pose":
             if valid and (t - self.step_t0) > POSE_SETTLE_SEC:
-                self.feats.append(feat)
-                self.labels.append((s["tx"], s["ty"]))
-                self.opens_all.append(opens)
-                self.groups.append(self.index)
+                looking = self._pose_gaze_ok(feat, s)
+                self.pose_looking = looking
+                dt = 0.0 if self.pose_prev_t is None else min(t - self.pose_prev_t, 0.1)
+                self.pose_prev_t = t
+                if looking:                                    # 두더지를 보는 동안만 시간을 세고 데이터를 모음
+                    self.pose_good += dt
+                    self.feats.append(feat)
+                    self.labels.append((s["tx"], s["ty"]))
+                    self.opens_all.append(opens)
+                    self.groups.append(self.index)
+            else:
+                self.pose_prev_t = None                        # 깜빡임/얼굴 놓침 구간은 시간에 안 넣음
         elif s["kind"] == "validate":
             elapsed = t - self.step_t0
             if valid and VALID_SETTLE_SEC <= elapsed < VALIDATE_SEC:
@@ -344,7 +397,11 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
             if now - self.step_t0 >= PURSUIT_DIG_SEC + PURSUIT_SEC + PURSUIT_POP_SEC:
                 self._start_whack()
         elif s["kind"] == "pose":
-            if now - self.step_t0 >= POSE_SEC:
+            if self.mouse_mode:
+                done = now - self.step_t0 >= POSE_SEC
+            else:                                              # 두더지를 충분히 봤거나, 너무 오래 걸리면 다음으로
+                done = self.pose_good >= POSE_GOOD_SEC or now - self.step_t0 >= POSE_MAX_SEC
+            if done:
                 self._start_whack()
         elif s["kind"] == "validate":
             if now - self.step_t0 >= VALIDATE_SEC:
@@ -382,9 +439,7 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-        if self.bg_pix is None or self.bg_pix.size() != self.size():
-            self.bg_pix = self._make_background()
-        p.drawPixmap(0, 0, self.bg_pix)
+        p.drawPixmap(0, 0, self._background_for(None if self.showing_summary else self._current()))
 
         if self.showing_summary:
             self._paint_summary(p)
@@ -437,9 +492,45 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         p.drawPixmap(QtCore.QPointF(-S / 2, -MOLE_BOTTOM_Y * S), pix)
         p.restore()
 
-    def _make_background(self):
-        """모래색 땅 + 흙 자국 + 격자 자리의 구멍들을 한 장의 그림으로 미리 그려 둠 (60fps 다시 그리기 부담 줄이기).
-        흙 자국은 실행할 때마다 같은 모양이 되도록 고정된 난수로 뿌림."""
+    # ── 단계별 배경 ───────────────────────────────────────────────
+    # 두더지가 나오는 자리마다 구멍이 미리 파여 있도록, 단계마다 구멍 위치가 다른 배경을 쓴다.
+    #   grid(격자)     : 격자 점마다 구멍
+    #   pursuit(따라 보기): 구멍 하나(가운데) — 땅을 파고 들어갔다가 같은 자리로 다시 나옴
+    #   pose(자세 변화) : 중앙·위·아래·왼쪽·오른쪽 구멍
+    #   validate(검증)  : 검증 위치 구멍
+    #   none(결과 화면 등): 구멍 없음
+    def _hole_points(self, kind):
+        if kind == "grid":
+            return grid_targets()
+        if kind == "pursuit":
+            return [(0.5, 0.5)]
+        if kind == "pose":
+            return pose_targets()
+        if kind == "validate":
+            return validation_targets()
+        return []
+
+    def _background_kind(self, s):
+        """지금 화면에 쓸 배경 종류. 안내(배너) 화면은 곧 이어질 단계의 배경을 미리 보여줌."""
+        if s is None:
+            return "none"
+        if s["kind"] != "banner":
+            return s["kind"]
+        for nxt in self.steps[self.index + 1:]:
+            if nxt["kind"] != "banner":
+                return nxt["kind"]
+        return "none"
+
+    def _background_for(self, s):
+        key = (self._background_kind(s), self.width(), self.height())
+        pix = self.bg_cache.get(key)
+        if pix is None:
+            pix = self.bg_cache[key] = self._make_background(key[0])
+        return pix
+
+    def _make_background(self, kind="grid"):
+        """모래색 땅 + 흙 자국 + 이 단계의 구멍들을 한 장의 그림으로 미리 그려 둠 (60fps 다시 그리기 부담 줄이기).
+        흙 자국은 실행할 때마다, 그리고 단계가 달라도 같은 모양이 되도록 고정된 난수로 뿌림."""
         w, h = self.width(), self.height()
         pix = QtGui.QPixmap(w, h)
         pix.fill(SAND)
@@ -455,7 +546,7 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
             ang = math.radians(rng.uniform(-14, 14))
             dx, dy = math.cos(ang) * length / 2, math.sin(ang) * length / 2
             p.drawLine(QtCore.QPointF(x - dx, y - dy), QtCore.QPointF(x + dx, y + dy))
-        for tx, ty in grid_targets():               # 두더지가 튀어나올 수 있는 구멍들
+        for tx, ty in self._hole_points(kind):      # 이 단계에서 두더지가 튀어나올 구멍들
             p.save()
             cx, cy = tx * w, ty * h
             p.translate(cx, cy - MOLE_NOSE_Y * self.S + MOLE_BOTTOM_Y * self.S)   # _draw_mole과 같은 기준점
@@ -540,7 +631,7 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
 
     def _draw_progress(self, p, s, cx, cy, now):
         """두더지를 감싸는 진행 고리. 격자: 안 보고 있으면 빨간 고리 → 보는 동안 노랗게 차오름 → 확정되면 초록.
-        자세변화=노랑, 검증=초록으로 시간에 따라 차오름."""
+        자세변화: 두더지를 보는 동안만 노랗게 차오르고 딴 곳을 보면 빨간 고리. 검증=초록으로 시간에 따라 차오름."""
         if s["kind"] == "grid":
             frac = self.tracker.progress(now) if self.tracker else 0.0
             fill = theme.GREEN if frac >= 1.0 else theme.YELLOW
@@ -548,7 +639,10 @@ class MoleCalibrationWindow(QtWidgets.QWidget):
         elif s["kind"] == "pursuit":
             frac, fill, edge = min((now - self.step_t0) / PURSUIT_SEC, 1.0), theme.YELLOW, theme.YELLOW
         elif s["kind"] == "pose":
-            frac, fill, edge = min((now - self.step_t0) / POSE_SEC, 1.0), theme.YELLOW, theme.YELLOW
+            frac = (min((now - self.step_t0) / POSE_SEC, 1.0) if self.mouse_mode
+                    else min(self.pose_good / POSE_GOOD_SEC, 1.0))
+            fill = theme.YELLOW
+            edge = theme.RED if (not self.pose_looking and frac < 1.0) else theme.YELLOW   # 딴 곳을 보면 빨간 고리
         else:
             frac, fill, edge = min((now - self.step_t0) / VALIDATE_SEC, 1.0), theme.GREEN, theme.GREEN
 
