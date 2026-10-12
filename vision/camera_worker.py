@@ -41,7 +41,10 @@ class CameraWorker(QtCore.QThread):
     def run(self):
         """start()를 부르면 이 메서드가 별도 스레드에서 실행됨."""
         try:
-            cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            cap = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
+            if not cap.isOpened():                       # MSMF가 안 되는 컴퓨터는 예전 방식으로
+             cap.release()
+             cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)    
 
             # [원본: main()] 기본 640x480, --hd일 때만 더 높은 해상도 시도
             res_candidates = [(1920, 1080), (1280, 720), (640, 480)] if self.hd else [(640, 480)]
