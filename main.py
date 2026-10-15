@@ -49,6 +49,7 @@ from calibration.adaptive import AdaptiveCalibrator, left_button_down
 from control.clicker import (WinkDetector, DwellClicker, BlinkGesture, click_at, WINK_EYES, BLINK_COUNT,
                              BACK_COUNT)
 from control.text_sender import send_back
+from control.scroller import Scroller
 from ui.status_window import StatusWindow
 import json
 from pathlib import Path
@@ -117,6 +118,13 @@ class DemoApp(QtCore.QObject):
         self.panel = MenuPanel()
         self.keyboard = OnScreenKeyboard()
         self.status_win = StatusWindow(self._status_state)
+        # 스크롤 모드: 켜져 있으면(self.scroll_on) 화면 위·아래 가장자리를 볼 때 스크롤 (control/scroller.py)
+        self.scroller = Scroller(retarget_pointer=not self.mouse_mode,
+                                 exclude_rects=lambda: [w.frameGeometry() for w in (self.dock, self.status_win)
+                                                        if w.isVisible()])
+        self.scroller.auto_off.connect(self._on_scroll_auto_off)
+        self.scroller.pointer_moved.connect(self._on_scroll_pointer_moved)
+        self.scroller.progress_changed.connect(self._set_gauge)    # 스크롤 시작 전 머무름 게이지
         self.cursor.set_opacity(self.cursor_opacity)
         # 화면 전체 확대 (윈도우 확대 기능). 못 쓰는 컴퓨터면 available = False → 원형 돋보기(self.lens)로 대신
         self.zoomer = ScreenZoom()
@@ -319,8 +327,9 @@ class DemoApp(QtCore.QObject):
         if self.zoom > 1 and not self.paused and not self.zoomer.available:
             self.lens.follow(x, y)                      # 원형 돋보기 (화면 전체 확대를 못 쓰는 컴퓨터용)
         self.interaction.update_gaze(x, y, now)         # 응시 클릭 + 하이라이트
+        self.scroller.update(x, y, now, self._scroll_blocked())    # 스크롤 모드 (꺼져 있으면 아무것도 안 함)
         if self.dwell_on and self._clicking_ready():   # 응시 클릭: 데모 버튼·메뉴 위가 아닐 때만 (버튼은 자기 방식대로 눌림)
-            if self.interaction.over_button() or self._over_own_window(x, y):
+            if self.interaction.over_button() or self._over_own_window(x, y) or self.scroller.engaged:
                 self.dwell.reset()
             else:
                 frac, pt = self.dwell.update(x, y, now)
@@ -350,6 +359,22 @@ class DemoApp(QtCore.QObject):
         self._set_gauge(0.0)
         self.cursor.set_highlight(True)         # 눌렸다는 표시로 커서 테두리를 잠깐 깜빡임
         QtCore.QTimer.singleShot(220, lambda: self.cursor.set_highlight(self.interaction.over_button()))
+
+    def _scroll_blocked(self):
+        """스크롤 띠를 잠깐 멈춰야 하는 상태 (모드는 그대로 두고 동작만 멈춤). 화면 확대 중엔 가장자리를 보면 화면이 움직여서 겹침."""
+        return (self.paused or self.calibrating or self.keyboard_open or self.panel_open
+                or self.zoom > 1 or self.interaction.over_button())
+
+    def _on_scroll_auto_off(self):
+        """오래 스크롤을 안 써서 스크롤 모드가 스스로 꺼짐 → 토글·설정·상태 글자도 같이 끔."""
+        self.scroll_on = False
+        self._save_settings()
+        self._apply_state()
+
+    def _on_scroll_pointer_moved(self):
+        """스크롤하려고 우리가 마우스 포인터를 옮긴 것을 '실제 마우스 조작'으로 착각해 학습하지 않게."""
+        self.synthetic_until = time.time() + 0.4
+        self.mouse_hist.clear()
 
     def _set_gauge(self, frac):
         """응시 게이지: 시선 커서 둘레 + (원형 돋보기를 켰다면) 돋보기 십자 둘레."""
@@ -568,6 +593,7 @@ class DemoApp(QtCore.QObject):
               "zoom_kind": "screen" if self.zoomer.available else "lens"}
         self.panel.update_state(st)
         self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
+        self.scroller.set_enabled(self.scroll_on)       # 스크롤 로직도 같은 값을 따라감
         self.dock.set_menu_open(self.panel_open)    # 메뉴창이 열려 있으면 아이콘만 숨기고 토글은 그대로
         if self.zoomer.available:               # 화면 전체 확대
             if self.zoomer.level != self.zoom:  # 처음 확대할 땐 화면 가운데부터, 배율만 바꿀 땐 보던 곳 유지
