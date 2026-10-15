@@ -46,7 +46,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ---- 4) 실행 - 에러로 꺼지면 창을 닫지 않고 메시지를 보여줌 ----
+REM ---- 4) 바탕화면 바로가기 (예쁜 이름·아이콘) - 처음 한 번만 자동으로 만듦 ----
+if not exist ".shortcuts_done" (
+    if exist "make_shortcuts.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "make_shortcuts.ps1" >nul 2>&1
+        echo done> ".shortcuts_done"
+    )
+)
+
+REM ---- 5) 실행 - 에러로 꺼지면 창을 닫지 않고 메시지를 보여줌 ----
 %PY% main.py %*
 if errorlevel 1 pause
 exit /b

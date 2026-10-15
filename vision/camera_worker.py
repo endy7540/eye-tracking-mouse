@@ -10,6 +10,7 @@ camera_worker.py — 카메라 읽기를 "별도 스레드"에서 계속 돌리�
 결과(feat, opens)를 frame_ready 신호로 화면 쪽에 던져줍니다. 이 파일은 지금이
 캘리브레이션 중인지 실사용 중인지 모르고, 그 판단은 신호를 받는 main.py가 합니다.
 """
+import threading
 import time
 
 import cv2
@@ -38,40 +39,78 @@ class CameraWorker(QtCore.QThread):
         """메인 스레드에서 호출: 다음 반복에서 자연스럽게 끝나도록 플래그만 내림."""
         self._running = False
 
+    MSMF_TIMEOUT = 5.0   # MSMF가 이 시간(초) 안에 첫 화면을 못 주면 DSHOW로 넘어감
+
+    def _open_camera(self, backend):
+        """카메라를 열고 해상도/fps를 맞춘 뒤 첫 프레임이 읽히는지까지 확인.
+        성공하면 (cap, fps), 실패하면 None. (느린 카메라에선 여기서 오래 걸릴 수 있음)"""
+        cap = cv2.VideoCapture(self.camera_index, backend)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        # [원본: main()] 기본 640x480, --hd일 때만 더 높은 해상도 시도
+        res_candidates = [(1920, 1080), (1280, 720), (640, 480)] if self.hd else [(640, 480)]
+        for w, h in res_candidates:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+            if int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) >= w * 0.9:
+                break
+        # 30fps 협상: 웹캠이 더 낮으면 그 값, 더 높으면 30으로 맞춤
+        TARGET_FPS = 30
+        cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+        reported = cap.get(cv2.CAP_PROP_FPS)
+        fps = TARGET_FPS if reported <= 0 or reported >= TARGET_FPS else reported
+        # [원본: main()] 카메라 워밍업 — 열자마자 읽으면 실패하는 경우가 있어 잠깐 대기
+        for _ in range(30):
+            ok, _ = cap.read()
+            if ok:
+                return cap, fps
+            time.sleep(0.05)
+        cap.release()
+        return None
+
+    def _open_with_timeout(self, backend, timeout):
+        """_open_camera를 별도 스레드에서 돌리고 timeout초 안에 안 끝나면 포기(None).
+        포기한 스레드는 나중에 끝나더라도 스스로 카메라를 놓아줌."""
+        box = {"result": None, "done": False, "abandoned": False}
+        lock = threading.Lock()
+
+        def work():
+            try:
+                res = self._open_camera(backend)
+            except Exception:
+                res = None
+            with lock:
+                if box["abandoned"]:
+                    if res:
+                        res[0].release()      # 이미 DSHOW로 넘어갔으니 늦게 열린 건 닫기
+                else:
+                    box["result"] = res
+                box["done"] = True
+
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+        t.join(timeout)
+        with lock:
+            if not box["done"]:
+                box["abandoned"] = True
+                return None
+            return box["result"]
+
     def run(self):
         """start()를 부르면 이 메서드가 별도 스레드에서 실행됨."""
         try:
-            cap = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
-            if not cap.isOpened():                       # MSMF가 안 되는 컴퓨터는 예전 방식으로
-             cap.release()
-             cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)    
-
-            # [원본: main()] 기본 640x480, --hd일 때만 더 높은 해상도 시도
-            res_candidates = [(1920, 1080), (1280, 720), (640, 480)] if self.hd else [(640, 480)]
-            for w, h in res_candidates:
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-                if int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) >= w * 0.9:
-                    break
-             # 30fps 협상: 웹캠이 더 낮으면 그 값, 더 높으면 30으로 맞춤
-            TARGET_FPS = 30
-            cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
-            reported = cap.get(cv2.CAP_PROP_FPS)
-            self.fps = TARGET_FPS if reported <= 0 or reported >= TARGET_FPS else reported
-            min_interval = 0.8 / self.fps   # 이 간격보다 일찍 온 프레임은 처리하지 않음
-            last_t = 0.0
-                    
-            # [원본: main()] 카메라 워밍업 — 열자마자 읽으면 실패하는 경우가 있어 잠깐 대기
-            for _ in range(30):
-                ok, _ = cap.read()
-                if ok:
-                    break
-                time.sleep(0.05)
-            else:
+            # 1순위 MSMF(빠른 카메라는 25~30fps). 5초 안에 안 열리거나 화면이 안 오면 DSHOW로 자동 전환
+            opened = self._open_with_timeout(cv2.CAP_MSMF, self.MSMF_TIMEOUT)
+            if opened is None:
+                opened = self._open_camera(cv2.CAP_DSHOW)
+            if opened is None:
                 self.camera_error.emit("웹캠을 초기화하지 못했습니다.\n카메라가 다른 프로그램에서 "
                                        "사용 중인지, 카메라 번호(--camera)가 맞는지 확인하세요.")
-                cap.release()
                 return
+            cap, self.fps = opened
+            min_interval = 0.8 / self.fps   # 이 간격보다 일찍 온 프레임은 처리하지 않음
+            last_t = 0.0
 
             face_mesh = mp.solutions.face_mesh.FaceMesh(
                 max_num_faces=1, refine_landmarks=True,
