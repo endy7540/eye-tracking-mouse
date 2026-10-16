@@ -15,10 +15,10 @@ theme.py — 데모 전체가 같이 쓰는 폰트·색상·이미지 + 메뉴·
 
 색상은 두 종류입니다.
     1) 기본 색 (BG, INK, PANEL_BG, HIGHLIGHT, RED ...)
-       캘리브레이션(두더지) 화면·화상 키보드·상태 확인 창이 쓰는 갈색 계열 색. 테마와 상관없이 항상 그대로입니다.
+       캘리브레이션(두더지) 화면·상태 확인 창이 쓰는 갈색 계열 색. 테마와 상관없이 항상 그대로입니다.
        ※ 다른 담당자 파일(calibration/mole_calibration.py 등)도 이 이름을 쓰므로 이름·값을 바꾸지 마세요.
     2) 테마 색 (THEMES)
-       메뉴창·메뉴바 아이콘·커서에만 적용되는 색. 메뉴창 아래쪽 동그라미로 바꿀 수 있고, 기본은 "하늘(파랑)".
+       메뉴창·메뉴바 아이콘·스크롤 토글·커서·화상 키보드에 적용되는 색. 메뉴창 아래쪽 동그라미로 바꿀 수 있고, 기본은 "하늘(파랑)".
        각 테마는 main(대표색) / deep(진한 색: 글자·아이콘) / light(연한 색: 아이콘 바탕) 세 가지 색으로 이뤄짐.
        지금 테마는 current()로 읽고, set_theme("mint")처럼 바꿉니다.
 """
@@ -81,6 +81,12 @@ def theme_colors(key):
     return {"key": t["key"], "name": t["name"],
             "main": QtGui.QColor(*t["main"]), "deep": QtGui.QColor(*t["deep"]),
             "light": QtGui.QColor(*t["light"])}
+
+
+def css(color, alpha=None):
+    """QColor → 스타일시트 글자 "rgba(r, g, b, a)" (QLabel 글자색·배경색을 테마에 맞출 때 씀)."""
+    a = color.alpha() if alpha is None else int(255 * max(0.0, min(1.0, alpha)))
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {a})"
 
 
 def with_alpha(color, alpha):
