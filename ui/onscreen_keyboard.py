@@ -18,7 +18,8 @@ onscreen_keyboard.py — 메뉴 "키보드 열기"로 뜨는 화상 키보드
 
 [모듈화] ui 폴더 안 파일은 "from . import theme"처럼 점(.)을 붙여 불러오고,
          글자를 보내는 text_sender.py는 제어 담당 폴더라 "from control.text_sender import ..."로 불러옵니다.
-         키보드 색은 테마와 상관없이 갈색 그대로입니다 (테마는 메뉴·아이콘·커서에만 적용).
+[테마] 키보드 배경·키·글자색이 메뉴창과 같은 테마색을 따릅니다. 테마를 바꾸면 main.py가 refresh_theme()을 부름.
+         (키는 메뉴창이 아니라서 윙크 전용이 아니고, 지금처럼 응시로 입력됩니다)
 """
 import html
 
@@ -27,7 +28,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from . import theme
 from .gaze_widgets import GazeButton, CloseButton, setup_floating_window
 from .hangul import compose_jamo, to_keystrokes
-from .menu_bar import paint_panel_background
+from .menu_bar import paint_theme_panel
 from control.text_sender import send_text, activate, foreground_other_window, window_title, make_no_activate
 
 KEY_DWELL_SEC = 1.0        # 글자키는 메뉴 버튼(1.2초)보다 조금 빠르게
@@ -70,15 +71,13 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         head = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("화상 키보드")
         title.setFont(theme.title_font(30))
-        title.setStyleSheet("color: #4A3428; background: transparent;")
+        self.title_label = title
         self.lang_label = QtWidgets.QLabel("")
         self.lang_label.setFont(theme.ui_font(17))
-        self.lang_label.setStyleSheet("color: #78604E; background: transparent;")
-        self.close_btn = CloseButton()
+        self.close_btn = CloseButton(themed=True)
         self.close_btn.clicked.connect(lambda: self.close_requested.emit())
         self.target_label = QtWidgets.QLabel("")     # 글자를 보낼 창 이름 (예: Chrome)
         self.target_label.setFont(theme.ui_font(15, bold=False))
-        self.target_label.setStyleSheet("color: #2E8B57; background: transparent;")
         head.addWidget(title)
         head.addSpacing(12)
         head.addWidget(self.lang_label, 0, QtCore.Qt.AlignBottom)
@@ -93,9 +92,7 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         self.display.setTextFormat(QtCore.Qt.RichText)
         self.display.setFont(theme.ui_font(30, bold=False))
         self.display.setFixedHeight(66)
-        self.display.setStyleSheet("QLabel { background-color: rgba(255, 255, 255, 235);"
-                                   " border: 2px solid rgba(150, 115, 85, 170); border-radius: 14px;"
-                                   " padding: 4px 16px; color: #4A3428; }")
+        # 입력창 색은 refresh_theme()에서 테마에 맞춰 정함
         v.addWidget(self.display)
 
         # 자동완성 후보 3칸
@@ -103,7 +100,7 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         sug.setSpacing(GAP)
         self.sugg_btns = []
         for i in range(3):
-            b = GazeButton("", font_px=24)
+            b = GazeButton("", font_px=24, themed=True)
             b.setFixedHeight(58)
             b.clicked.connect(lambda _=False, i=i: self._choose(i))
             sug.addWidget(b, 1)
@@ -147,7 +144,7 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         row.setSpacing(GAP)
         row.addStretch(1)
         for label, enter in (("보내기", False), ("보내고 엔터", True)):
-            b = GazeButton(label, font_px=22, dwell_sec=SEND_DWELL_SEC, radius=14)
+            b = GazeButton(label, font_px=22, dwell_sec=SEND_DWELL_SEC, radius=14, themed=True)
             b.setFixedSize(5 * k + 4 * GAP, self.k)
             b.set_on(True)                          # 눈에 띄도록 '켜짐' 색으로 표시
             b.clicked.connect(lambda _=False, enter=enter: self._send(enter))
@@ -166,11 +163,11 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         self.flash_timer.timeout.connect(self._refresh)
 
         self._relabel()
-        self._refresh()
+        self.refresh_theme()
         self.adjustSize()
 
     def _key(self, text, slot, width, font_px, repeat):
-        b = GazeButton(text, font_px=font_px, repeatable=repeat,
+        b = GazeButton(text, font_px=font_px, repeatable=repeat, themed=True,
                        dwell_sec=KEY_DWELL_SEC if repeat else 1.2, radius=14)
         b.setFixedSize(width, self.k)
         if slot is not None:
@@ -286,11 +283,15 @@ class OnScreenKeyboard(QtWidgets.QWidget):
     def _refresh(self):
         text = compose_jamo(self.tokens)
         shown = text[-30:]                                   # 너무 길면 뒷부분만
-        caret = '<span style="color:#F28228;">|</span>'
+        th = theme.current()
+        caret = f'<span style="color:{th["main"].name()};">|</span>'           # 깜빡이는 자리 표시 = 테마색
         if shown:
             body = html.escape(shown).replace(" ", "&nbsp;")
         else:
-            body = '<span style="color:#B09A88;">여기에 입력한 글자가 보여요</span>'
+            d = th["deep"]                                    # 진한 테마색을 흰색과 섞은 연한 글자색
+            hint = QtGui.QColor(int(d.red() * 0.45 + 255 * 0.55), int(d.green() * 0.45 + 255 * 0.55),
+                                int(d.blue() * 0.45 + 255 * 0.55))
+            body = f'<span style="color:{hint.name()};">여기에 입력한 글자가 보여요</span>'
         self.display.setText(body + caret)
 
         sugg = self._suggestions()
@@ -298,5 +299,19 @@ class OnScreenKeyboard(QtWidgets.QWidget):
             b.setText(sugg[i] if i < len(sugg) else "")
             b.setEnabled(i < len(sugg))
 
+    def refresh_theme(self):
+        """테마가 바뀌면 글자색·입력창·키 색을 다시 맞춤 (키·배경은 그릴 때마다 theme.current()에서 읽음)."""
+        th = theme.current()
+        self.title_label.setStyleSheet(f"color: {theme.css(th['deep'])}; background: transparent;")
+        self.lang_label.setStyleSheet(f"color: {theme.css(th['deep'], 0.8)}; background: transparent;")
+        self.target_label.setStyleSheet(f"color: {theme.css(th['deep'])}; background: transparent;")
+        self.display.setStyleSheet("QLabel { background-color: rgba(255, 255, 255, 240);"
+                                   f" border: 2px solid {theme.css(th['main'], 0.6)}; border-radius: 14px;"
+                                   f" padding: 4px 16px; color: {theme.css(th['deep'])}; }}")
+        self.update()
+        for b in self.findChildren(GazeButton):
+            b.update()
+        self._refresh()
+
     def paintEvent(self, event):
-        paint_panel_background(self)
+        paint_theme_panel(self)
