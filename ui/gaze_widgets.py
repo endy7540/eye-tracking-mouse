@@ -9,15 +9,21 @@ GazeButton
     - 하이라이트: 시선(또는 마우스)이 올라가면 테두리가 굵은 주황색으로 바뀝니다.
     - 응시 진행률: 바라보는 동안 버튼 아래쪽에 주황색 막대가 차오릅니다.
 
+    - 윙크 전용 버튼(wink_only = True): 메뉴창 안의 버튼들. 바라보면 하이라이트만 되고 응시로는 눌리지 않으며,
+      윙크했을 때만 눌립니다 (GazeInteraction.wink_click). 마우스 클릭은 그대로 됩니다.
+    - 테마 모양(themed = True): 화상 키보드 키처럼 테마색(흰 바탕 + 테마색 테두리·글자)으로 그립니다.
+      themed = False(기본)면 예전 갈색 모양 그대로 (상태 확인 창 등).
+
 GazeInteraction
     main.py가 매 프레임 시선 좌표를 update_gaze(x, y, 시각)로 넣어주면,
     1) 지금 시선 아래에 있는 GazeButton을 찾고 (하이라이트 켜기/끄기)
-    2) 같은 버튼을 dwell_sec(기본 1.2초) 동안 계속 보면 그 버튼을 click() 합니다.
+    2) 같은 버튼을 dwell_sec(기본 1.2초) 동안 계속 보면 그 버튼을 click() 합니다. (윙크 전용 버튼은 제외)
+    3) main.py가 윙크를 감지하면 wink_click()을 불러, 지금 보고 있는 윙크 전용 버튼을 누릅니다.
     응시 진행률(0~1)과 하이라이트 여부를 신호로 내보내서, 시선 커서가 게이지/테두리를 그립니다.
 
 [모듈화] ui 폴더 안 파일끼리는 "from . import theme"처럼 점(.)을 붙여 불러옵니다.
          (프로젝트 맨 위 폴더에서 python main.py로 실행할 때 ui 폴더를 하나의 묶음(패키지)으로 찾기 때문)
-GazeButton의 생김새(갈색·주황 테두리)는 화상 키보드·상태 확인 창이 그대로 쓰므로 테마와 상관없이 유지합니다.
+GazeButton의 기본 생김새(갈색·주황 테두리)는 상태 확인 창이 그대로 씁니다.
 메뉴창의 테마색 카드는 menu_bar.py에서 GazeButton을 물려받아 따로 그립니다.
 """
 from PyQt5 import QtWidgets, QtCore, QtGui
@@ -48,10 +54,12 @@ def setup_floating_window(widget, click_through=False):
 
 class GazeButton(QtWidgets.QPushButton):
     def __init__(self, text="", parent=None, dwell_sec=DWELL_CLICK_SEC, repeatable=False,
-                 font_px=22, radius=16):
+                 font_px=22, radius=16, themed=False):
         super().__init__(text, parent)
         self.dwell_sec = dwell_sec            # 이 버튼을 누르는 데 필요한 응시 시간
         self.repeatable = repeatable          # 계속 보고 있으면 반복 입력 (키보드 글자키)
+        self.wink_only = False                # True = 응시로는 안 눌리고 윙크로만 (메뉴창 버튼)
+        self.themed = themed                  # True = 테마색으로 그림 (화상 키보드)
         self.active_when_paused = False       # 일시정지 중에도 시선으로 누를 수 있는지 (자물쇠만 True)
         self.on = False                       # 토글 버튼이 '켜짐' 상태로 보일지
         self.gaze_hover = False
@@ -94,21 +102,30 @@ class GazeButton(QtWidgets.QPushButton):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         r = QtCore.QRectF(self.rect()).adjusted(3, 3, -3, -3)
         hl = self.is_highlighted()
-
-        bg = QtGui.QColor(theme.BTN_ON if self.on else theme.BTN_BG)
+        if self.themed:                        # 테마색: 흰 바탕(켜짐 = 연한 테마색) + 테마색 테두리, 하이라이트 = 진한 테마색
+            th = theme.current()
+            bg = QtGui.QColor(th["light"]) if self.on else QtGui.QColor(255, 255, 255, 225)
+            if not self.isEnabled():
+                bg = QtGui.QColor(255, 255, 255, 130)
+            edge = th["deep"] if hl else theme.with_alpha(th["main"], 0.55 if self.isEnabled() else 0.25)
+            gauge, ink = th["main"], (th["deep"] if self.isEnabled() else theme.with_alpha(th["deep"], 0.45))
+        else:                                  # 기본: 갈색 (상태 확인 창 등)
+            bg = QtGui.QColor(theme.BTN_ON if self.on else theme.BTN_BG)
+            edge = theme.HIGHLIGHT if hl else theme.BTN_EDGE
+            gauge, ink = theme.GAUGE, (theme.INK if self.isEnabled() else theme.INK_SOFT)
         if self.isDown():
             bg = bg.darker(108)
-        p.setPen(QtGui.QPen(theme.HIGHLIGHT if hl else theme.BTN_EDGE, 5 if hl else 2))   # 하이라이트 = 굵은 테두리
+        p.setPen(QtGui.QPen(edge, 5 if hl else 2))   # 하이라이트 = 굵은 테두리
         p.setBrush(bg)
         p.drawRoundedRect(r, self.radius, self.radius)
 
         if self.progress > 0:                  # 응시 진행 막대
             bar = QtCore.QRectF(r.left() + 12, r.bottom() - 10, (r.width() - 24) * self.progress, 5)
             p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(theme.GAUGE)
+            p.setBrush(gauge)
             p.drawRoundedRect(bar, 2.5, 2.5)
 
-        p.setPen(theme.INK if self.isEnabled() else theme.INK_SOFT)
+        p.setPen(ink)
         p.setFont(self.font())
         p.drawText(r, QtCore.Qt.AlignCenter, self.text())
 
@@ -116,8 +133,8 @@ class GazeButton(QtWidgets.QPushButton):
 class CloseButton(GazeButton):
     """크롬 창처럼 오른쪽 위에 붙는 X 버튼. 평소엔 X만 보이고, 시선/마우스가 올라가면 빨간 배경."""
 
-    def __init__(self, parent=None, size=46):
-        super().__init__("", parent)
+    def __init__(self, parent=None, size=46, themed=False):
+        super().__init__("", parent, themed=themed)
         self.setFixedSize(size, size)
         self.setToolTip("닫기")
 
@@ -130,11 +147,17 @@ class CloseButton(GazeButton):
             p.setPen(QtCore.Qt.NoPen)
             p.setBrush(QtGui.QColor(232, 17, 35))          # 크롬 닫기 버튼의 빨강
             p.drawRoundedRect(r, 10, 10)
+        ink = theme.current()["deep"] if self.themed else theme.INK
+        gauge = theme.current()["main"] if self.themed else theme.GAUGE
+        if self.themed and not hl:                         # 테마 모양: 흰 동그라미 바탕
+            p.setPen(QtGui.QPen(theme.with_alpha(theme.current()["main"], 0.6), 2))
+            p.setBrush(QtGui.QColor(255, 255, 255, 235))
+            p.drawEllipse(r)
         if self.progress > 0:                              # 응시 진행률을 테두리로 표시
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255) if hl else theme.GAUGE, 4))
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255) if hl else gauge, 4))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawArc(r.adjusted(4, 4, -4, -4), 90 * 16, int(-360 * 16 * self.progress))
-        pen = QtGui.QPen(QtGui.QColor(255, 255, 255) if hl else theme.INK, 3.5)
+        pen = QtGui.QPen(QtGui.QColor(255, 255, 255) if hl else ink, 3.5)
         pen.setCapStyle(QtCore.Qt.RoundCap)
         p.setPen(pen)
         c = r.center()
@@ -204,6 +227,8 @@ class GazeInteraction(QtCore.QObject):
 
         if target is None:
             return
+        if target.wink_only:                # 메뉴창 버튼: 하이라이트만, 응시 게이지·응시 클릭 없음 (윙크로만 누름)
+            return
         if self._fired:                     # 이미 눌렀고 반복 입력 버튼이 아니면, 시선을 뗐다가 다시 와야 함
             return
 
@@ -222,3 +247,18 @@ class GazeInteraction(QtCore.QObject):
         frac = max(0.0, frac)
         target.set_progress(frac)
         self.progress_changed.emit(frac)
+
+    def wink_click(self, now=0.0):
+        """윙크했을 때 호출 (main.py). 지금 보고 있는 버튼이 윙크 전용(메뉴창 버튼)이면 그 버튼을 누르고 True.
+        아니면 아무것도 안 하고 False → main.py가 대신 실제 마우스 클릭을 함."""
+        target = self._target
+        if target is None or not target.wink_only:
+            return False
+        try:
+            if not target.isVisible() or not target.isEnabled():
+                return False
+            self.dwell_clicked.emit(QtCore.QRect(target.mapToGlobal(QtCore.QPoint(0, 0)), target.size()), now)
+        except RuntimeError:
+            return False
+        target.click()
+        return True
