@@ -5,17 +5,19 @@ main.py — 시선 추적 데모 실행 파일 (두더지 캘리브레이션 →
 설치:   pip install opencv-python mediapipe numpy PyQt5
 실행:   python main.py                 (카메라로 실행 — 시작하면 두더지 캘리브레이션부터)
         python main.py --mouse         (테스트용 — 카메라 없이 마우스를 시선 대신 사용)
-        python main.py --skip-calib    (저장된 calibration.npz가 있으면 캘리브레이션 건너뜀)
+        python main.py --recalibrate   (저장된 캘리브레이션을 무시하고 처음부터 다시)
         python main.py --camera 1 --hd (카메라 번호 / 고해상도 — 원본과 같은 옵션)
 종료:   메뉴창 오른쪽 아래 "종료" 버튼, 캘리브레이션 중 ESC, 또는 터미널에서 Ctrl+C
 
 전체 흐름
     1) 카메라 스레드(CameraWorker)가 계속 얼굴 특징값을 보내줍니다.
     2) 두더지 캘리브레이션(MoleCalibrationWindow)이 그 값으로 W(시선→화면 변환식)를 만듭니다.
-    3) 이후에는 GazeSession이 매 프레임 화면 좌표를 계산 → (화면 전체 확대 중이면 실제 좌표로 바꾼 뒤)
-       _on_gaze()가 시선 커서 이동 / 메뉴 아이콘 나타나기 / 시선 버튼(응시 클릭·하이라이트)에 나눠줍니다.
+    3) 이후에는 GazeSession이 매 프레임 화면 좌표를 계산 →
+       _on_gaze()가 시선 커서 이동 / 메뉴 아이콘 나타나기 / 시선 버튼(응시 클릭·하이라이트) / 스크롤에 나눠줍니다.
     4) 오른쪽 아래 메뉴 아이콘 → 화면 가운데 메뉴창에서 모드를 바꾸면, 이 파일의 함수들이 실제로 상태를 바꿉니다.
-       (커서 투명도·테마는 settings.json에 저장되어 다음에 켜도 그대로)
+       (커서 투명도·테마·스크롤은 settings.json에 저장되어 다음에 켜도 그대로)
+       ★ 메뉴창(설정 화면 포함) 안의 버튼은 윙크로만 눌립니다. 윙크 설정이 "끔"이어도 메뉴창 안에서는
+         양쪽 눈 윙크를 받아서 지금 보고 있는 메뉴 버튼을 누릅니다 (_on_frame의 윙크 처리).
 
 이 파일은 "누가 무엇을 할지" 연결만 하는 배선판입니다. 계산은 gaze_core.py, 화면은 각 UI 파일에 있습니다.
 """
@@ -59,7 +61,6 @@ WINK_CYCLE = ["both", "left", "right", "off"]
 from ui.gaze_widgets import GazeInteraction
 from calibration.mole_calibration import MoleCalibrationWindow
 from ui.seal_cursor import SealCursorOverlay, DEFAULT_OPACITY, OPACITY_STEP, MIN_OPACITY, MAX_OPACITY
-from ui.magnifier import Magnifier, ScreenZoom, MAX_LEVEL, ZOOM_STEP, zoom_text
 from ui.menu_bar import MenuDock, MenuPanel
 from ui.onscreen_keyboard import OnScreenKeyboard
 
@@ -75,7 +76,6 @@ class DemoApp(QtCore.QObject):
         self.calibrating = False
         self.tracking_started = False
         self.paused = False
-        self.zoom = 1.0
         self.trail_on = True
         self.keyboard_open = False
         self.panel_open = False
@@ -113,7 +113,6 @@ class DemoApp(QtCore.QObject):
         # 화면 부품들
         self.interaction = GazeInteraction()
         self.cursor = SealCursorOverlay()
-        self.lens = Magnifier()
         self.dock = MenuDock()
         self.panel = MenuPanel()
         self.keyboard = OnScreenKeyboard()
@@ -126,9 +125,6 @@ class DemoApp(QtCore.QObject):
         self.scroller.pointer_moved.connect(self._on_scroll_pointer_moved)
         self.scroller.progress_changed.connect(self._set_gauge)    # 스크롤 시작 전 머무름 게이지
         self.cursor.set_opacity(self.cursor_opacity)
-        # 화면 전체 확대 (윈도우 확대 기능). 못 쓰는 컴퓨터면 available = False → 원형 돋보기(self.lens)로 대신
-        self.zoomer = ScreenZoom()
-        self.zoomer.set_guard(*self.dock.home_center())       # 메뉴 아이콘 근처를 볼 때는 확대 화면을 움직이지 않음
 
         # 시선 버튼 상태 → 시선 커서 (게이지, 하이라이트)
         self.interaction.progress_changed.connect(self._set_gauge)
@@ -140,8 +136,6 @@ class DemoApp(QtCore.QObject):
         self.dock.unlock_requested.connect(self.resume)
         self.dock.scroll_toggle_requested.connect(self.toggle_scroll)
         self.panel.close_requested.connect(self.close_panel)
-        self.panel.zoom_in_requested.connect(self.zoom_in)
-        self.panel.zoom_out_requested.connect(self.zoom_out)
         self.panel.transparency_up_requested.connect(lambda: self.change_opacity(-OPACITY_STEP))    # 투명도 + = 진하기 -
         self.panel.transparency_down_requested.connect(lambda: self.change_opacity(+OPACITY_STEP))
         self.panel.theme_selected.connect(self.set_theme)
@@ -193,13 +187,12 @@ class DemoApp(QtCore.QObject):
     # ── 캘리브레이션 ──────────────────────────────────────────────
     def start_calibration(self):
         self.calibrating = True
-        self.zoomer.set_suspended(True)        # 두더지 화면은 원래 크기로 (끝나면 _apply_state가 다시 확대)
         self.interaction.enabled = False
         self.interaction.reset()
         self.panel_open = self.keyboard_open = False
         if self.status_win.isVisible():
             self.toggle_status()
-        for w in (self.cursor, self.lens, self.dock, self.panel, self.keyboard):
+        for w in (self.cursor, self.dock, self.panel, self.keyboard):
             w.hide()
         # 이전 캘리브레이션 창은 여기서 새 창으로 교체될 때 정리됨 (닫힌 뒤라 안전)
         self.calib_win = MoleCalibrationWindow(self.mouse_mode, self._on_calib_finished,
@@ -284,7 +277,7 @@ class DemoApp(QtCore.QObject):
         if gesture == "back" and self._clicking_ready():
             print("[깜빡임] 3번 → 뒤로가기")
             send_back()
-            self._show_badge("back")            # 시선 커서(또는 돋보기) 위에 파란 ← 표시
+            self._show_badge("back")            # 시선 커서 위에 파란 ← 표시
         elif gesture == "pause":
             if self.paused:
                 print("[깜빡임] 연속 깜빡임 → 다시 시작")
@@ -292,40 +285,34 @@ class DemoApp(QtCore.QObject):
             else:
                 print("[깜빡임] 연속 깜빡임 → 일시정지")
                 self.pause()
-        if self.wink_mode != "off":
-            fired = self.wink.update(opens, self.session.base, t, WINK_EYES[self.wink_mode])
-            if fired and self._clicking_ready():
+        # 윙크: 메뉴창(설정 화면 포함)이 열려 있으면 윙크 설정과 상관없이 양쪽 눈 윙크를 받아서 메뉴 버튼을 누름.
+        #       메뉴창 밖(또는 메뉴 버튼이 아닌 곳)을 보고 윙크하면 원래대로 윙크 설정을 따라 실제 마우스 클릭.
+        if self.panel_open:
+            eyes = WINK_EYES["both"]
+        else:
+            eyes = WINK_EYES[self.wink_mode] if self.wink_mode != "off" else ()   # 꺼져 있어도 눈 막대는 보여주기
+        fired = self.wink.update(opens, self.session.base, t, eyes)
+        if fired and self._clicking_ready():
+            if self.panel_open and self.interaction.wink_click(t):
+                self.last_wink_click_t = t
+                self._show_check()              # 메뉴 버튼을 윙크로 누름 → 커서 위에 초록 체크
+            elif self.wink_mode != "off":
                 self.last_wink_click_t = t
                 self._gaze_click()              # 윙크 → 윙크 직전에 보던 곳(커서는 감는 동안 고정됨)을 클릭
-        else:
-            self.wink.update(opens, self.session.base, t, ())   # 꺼져 있어도 상태 확인 창의 눈 막대는 보여주기
         p = self.session.process(feat, opens, t)
         if p is not None:                       # None = 얼굴 없음/깜빡임 → 커서는 그 자리에 그대로
-            x, y = self._screen_to_desktop(p[0] + self.geo.x(), p[1] + self.geo.y())
-            self._on_gaze(x, y, t)
-
-    def _screen_to_desktop(self, sx, sy):
-        """눈이 보는 화면 위치 → 실제 좌표. 화면 전체 확대 중이면 가장자리를 볼 때 화면도 움직임(팬)."""
-        if self.zoomer.active:
-            self.zoomer.follow(sx, sy)
-            self.dock.set_view(self.zoomer.view_rect(), self.zoomer.level)   # 메뉴 아이콘도 보이는 영역을 따라감
-        return self.zoomer.to_desktop(sx, sy)
+            self._on_gaze(p[0] + self.geo.x(), p[1] + self.geo.y(), t)
 
     def _on_mouse_tick(self):
         if self.calibrating or not self.tracking_started:
             return
         pos = QtGui.QCursor.pos()
-        if self.zoomer.active:                  # 마우스는 이미 실제 좌표라서, 화면 위치로 바꿔서 화면 이동(팬)만 계산
-            self.zoomer.follow(*self.zoomer.to_screen(pos.x(), pos.y()))
-            self.dock.set_view(self.zoomer.view_rect(), self.zoomer.level)
         self._on_gaze(pos.x(), pos.y(), time.time())
 
     def _on_gaze(self, x, y, now):
         self.last_gaze = (x, y)
         self.cursor.move_to(x, y, now)                  # 시선 커서 + 궤적
         self.dock.update_gaze(x, y)                     # 커서가 가까이 오면 메뉴 아이콘이 나타남
-        if self.zoom > 1 and not self.paused and not self.zoomer.available:
-            self.lens.follow(x, y)                      # 원형 돋보기 (화면 전체 확대를 못 쓰는 컴퓨터용)
         self.interaction.update_gaze(x, y, now)         # 응시 클릭 + 하이라이트
         self.scroller.update(x, y, now, self._scroll_blocked())    # 스크롤 모드 (꺼져 있으면 아무것도 안 함)
         if self.dwell_on and self._clicking_ready():   # 응시 클릭: 데모 버튼·메뉴 위가 아닐 때만 (버튼은 자기 방식대로 눌림)
@@ -361,9 +348,9 @@ class DemoApp(QtCore.QObject):
         QtCore.QTimer.singleShot(220, lambda: self.cursor.set_highlight(self.interaction.over_button()))
 
     def _scroll_blocked(self):
-        """스크롤 띠를 잠깐 멈춰야 하는 상태 (모드는 그대로 두고 동작만 멈춤). 화면 확대 중엔 가장자리를 보면 화면이 움직여서 겹침."""
+        """스크롤 띠를 잠깐 멈춰야 하는 상태 (모드는 그대로 두고 동작만 멈춤)."""
         return (self.paused or self.calibrating or self.keyboard_open or self.panel_open
-                or self.zoom > 1 or self.interaction.over_button())
+                or self.interaction.over_button())
 
     def _on_scroll_auto_off(self):
         """오래 스크롤을 안 써서 스크롤 모드가 스스로 꺼짐 → 토글·설정·상태 글자도 같이 끔."""
@@ -377,16 +364,14 @@ class DemoApp(QtCore.QObject):
         self.mouse_hist.clear()
 
     def _set_gauge(self, frac):
-        """응시 게이지: 시선 커서 둘레 + (원형 돋보기를 켰다면) 돋보기 십자 둘레."""
+        """응시 게이지: 시선 커서 둘레."""
         self.cursor.set_gauge(frac)
-        self.lens.set_gauge(frac)
 
     def _show_check(self):
         self._show_badge("check")
 
     def _show_badge(self, kind):
         self.cursor.show_badge(kind)
-        self.lens.show_badge(kind)
 
     def toggle_wink(self):
         """윙크 클릭: 아무 쪽 → 왼눈만 → 오른눈만 → 끔 → 아무 쪽 … (두 눈 같이 감기는 항상 무시)"""
@@ -511,21 +496,6 @@ class DemoApp(QtCore.QObject):
         self.dock.show()
         self._apply_state()
 
-    def zoom_in(self):
-        self.zoom = min(MAX_LEVEL, round(self.zoom + ZOOM_STEP, 2))      # 0.25배씩
-        self._after_zoom_change()
-
-    def zoom_out(self):
-        self.zoom = max(1.0, round(self.zoom - ZOOM_STEP, 2))
-        self._after_zoom_change()
-
-    def _after_zoom_change(self):
-        """배율을 바꾸면 메뉴창을 바로 닫음 — 메뉴창이 떠 있는 동안은 확대가 잠깐 꺼져 있어서, 닫아야 확대가 보이므로."""
-        if self.panel_open:
-            self.close_panel()                  # close_panel 안에서 _apply_state가 불려 확대가 적용됨
-        else:
-            self._apply_state()
-
     def pause(self):
         """일시정지: 커서만 숨기고 프로그램은 뒤에서 계속 실행. 메뉴 아이콘은 자물쇠로 바뀜."""
         self.paused = True
@@ -569,12 +539,12 @@ class DemoApp(QtCore.QObject):
         self._apply_state()
 
     def set_theme(self, key):
-        """테마 바꾸기 → 메뉴창·메뉴 아이콘·커서(+ 원형 돋보기 테두리) 색을 다시 그림."""
+        """테마 바꾸기 → 메뉴창·메뉴 아이콘·스크롤 토글·커서·화상 키보드 색을 다시 그림."""
         theme.set_theme(key)
         self.cursor.refresh_theme()
         self.dock.refresh_theme()
         self.panel.refresh_theme()
-        self.lens.update()
+        self.keyboard.refresh_theme()
         self._save_settings()
         self._apply_state()
 
@@ -585,38 +555,20 @@ class DemoApp(QtCore.QObject):
 
     # ── 화면 정리 ─────────────────────────────────────────────────
     def _apply_state(self):
-        """모드가 바뀔 때마다: 메뉴판 상태 칩, 오른쪽 아래 상태 글자, 돋보기 표시를 맞춤."""
-        st = {"paused": self.paused, "zoom": self.zoom, "trail": self.trail_on,
+        """모드가 바뀔 때마다: 메뉴창 카드 상태, 오른쪽 아래 상태 글자·스크롤 토글 표시를 맞춤."""
+        st = {"paused": self.paused, "trail": self.trail_on,
               "keyboard": self.keyboard_open, "wink": self.wink_mode, "dwell": self.dwell_on,
               "status": self.status_win.isVisible(), "opacity": self.cursor_opacity,
-              "theme": theme.current_key(), "zoom_max": MAX_LEVEL,
-              "zoom_kind": "screen" if self.zoomer.available else "lens"}
+              "theme": theme.current_key()}
         self.panel.update_state(st)
         self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
         self.scroller.set_enabled(self.scroll_on)       # 스크롤 로직도 같은 값을 따라감
         self.dock.set_menu_open(self.panel_open)    # 메뉴창이 열려 있으면 아이콘만 숨기고 토글은 그대로
-        if self.zoomer.available:               # 화면 전체 확대
-            if self.zoomer.level != self.zoom:  # 처음 확대할 땐 화면 가운데부터, 배율만 바꿀 땐 보던 곳 유지
-                center = (self.geo.x() + self.geo.width() / 2, self.geo.y() + self.geo.height() / 2) if self.zoomer.level == 1 else None
-                self.zoomer.set_level(self.zoom, center)
-            # 메뉴창·키보드·상태 확인 창·캘리브레이션이 떠 있는 동안은 원래 크기로 (그 창들까지 커져서 화면 밖으로 밀려나므로)
-            self.zoomer.set_suspended(self.calibrating or self.panel_open or self.keyboard_open
-                                      or self.status_win.isVisible())
-            level = self.zoomer.effective_level()
-            self.lens.setVisible(False)
-            self.cursor.set_hidden(False)
-            self.cursor.set_zoom(level)         # 확대돼도 커서가 원래 크기로 보이게
-            self.dock.set_view(self.zoomer.view_rect() if self.zoomer.active else None, level)
-        else:                                   # 예비: 원형 돋보기
-            self.lens.set_level(self.zoom)
-            zoomed = self.zoom > 1 and not self.paused and not self.calibrating
-            self.lens.setVisible(zoomed)
-            self.cursor.set_hidden(zoomed)      # 돋보기 동안엔 커서 숨김 → 돋보기 속을 가리지 않음, 녹화도 정상
 
         if self.paused:
             text = f"일시정지 중 · 자물쇠를 3초 보거나 눈을 {BLINK_COUNT}번 빠르게 깜빡이면 다시 켜져요"
         else:
-            parts = ["활성", f"배율 {zoom_text(self.zoom)}", "잔상 ON" if self.trail_on else "잔상 OFF"]
+            parts = ["활성", "잔상 ON" if self.trail_on else "잔상 OFF"]
             if self.adapt is not None and self.adapt.count:
                 parts.append(f"자동 보정 {self.adapt.count}")
             if self.keyboard_open:
@@ -645,9 +597,7 @@ class DemoApp(QtCore.QObject):
         kb.move(x, area.bottom() - kb.height() - 20)
 
     def _raise_cursor(self):
-        """시선 커서와 돋보기가 메뉴·키보드보다 항상 위에 보이도록."""
-        if self.lens.isVisible():
-            self.lens.raise_()
+        """시선 커서가 메뉴·키보드보다 항상 위에 보이도록."""
         self.cursor.raise_()
 
     def _on_camera_error(self, msg):
@@ -655,7 +605,6 @@ class DemoApp(QtCore.QObject):
         self.app.quit()
 
     def _shutdown(self):
-        self.zoomer.shutdown()                  # 화면 확대를 원래대로
         if not self.mouse_mode:
             self.worker.stop()
             self.worker.wait(1500)
