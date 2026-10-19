@@ -38,6 +38,8 @@ from vision.gaze_core import (STABLE_HX_TOL, STABLE_VY_TOL, fit, predict_norm, f
 FRAME_KEEP_SEC = 2.0          # 최근 이만큼의 눈 데이터를 보관 (클릭 직전 구간을 꺼내 쓰기 위해)
 DWELL_WINDOW = (0.70, 0.05)   # 응시 클릭: 클릭 0.7초 전 ~ 0.05초 전 (버튼을 바라보던 구간)
 MOUSE_WINDOW = (0.35, 0.05)   # 마우스 클릭: 클릭 0.35초 전 ~ 0.05초 전 (목표에 도착해서 보던 구간)
+GAME_WINDOW = (0.30, 0.02)    # 미니게임: 맞힌 뒤 0.3초가 지난 시점에 호출 → 맞힌 직후 0.28초 (터지는 연출을 보고 있는 구간)
+GAME_OUTLIER_FRAC = 0.15      # 미니게임 샘플은 더 엄격하게: 예측과 대각선의 15% 넘게 멀면 바로 버림 (보류·일괄 수용 없음)
 MIN_FRAMES = 3                # 그 구간에 눈 뜬 프레임이 이만큼은 있어야 사용
 MIN_GAP_SEC = 0.8             # 샘플 사이 최소 간격 (연속 입력 키가 같은 자리 데이터를 몰아넣지 않게)
 OUTLIER_FRAC = 0.30           # 예측과 클릭 위치가 화면 대각선의 이 비율 이상 떨어지면 버림
@@ -102,11 +104,11 @@ class AdaptiveCalibrator:
 
     def add_click(self, t, label, kind):
         """t 시각에 label(0~1 화면 좌표)을 보고 클릭했다는 정보.
-        kind: "dwell"(응시 클릭) 또는 "mouse"(실제 마우스 클릭).
+        kind: "dwell"(응시 클릭·숫자 맞추기) / "mouse"(실제 마우스 클릭) / "game"(미니게임에서 맞힌 별·두더지).
         반환: "rejected"(버림) / "added"(모아둠) / "refit"(다시 학습해서 self.W 바뀜) / "kept"(학습했지만 적용 안 함)"""
         if t - self.last_sample_t < MIN_GAP_SEC:
             return "rejected"
-        before, after = DWELL_WINDOW if kind == "dwell" else MOUSE_WINDOW
+        before, after = {"dwell": DWELL_WINDOW, "game": GAME_WINDOW}.get(kind, MOUSE_WINDOW)
         win = [f for (ft, f) in self.frames if t - before <= ft <= t - after]
         if len(win) < MIN_FRAMES:
             return "rejected"
@@ -120,6 +122,8 @@ class AdaptiveCalibrator:
         self.last_sample_t = t
         if kind == "mouse":                       # 응시 클릭은 예측이 이미 버튼 안이라 정확도 지표로는 안 씀
             self.recent_err.append(float(np.linalg.norm(resid)) * self.diag)
+        if kind == "game" and np.linalg.norm(resid) > GAME_OUTLIER_FRAC:
+            return "rejected"
         if np.linalg.norm(resid) > OUTLIER_FRAC:
             return self._hold(t, f, y, resid)     # 너무 멀다 → 일단 보류하고 같은 패턴이 반복되는지 봄
 

@@ -6,6 +6,7 @@ main.py — 시선 추적 데모 실행 파일 (두더지 캘리브레이션 →
 실행:   python main.py                 (카메라로 실행 — 시작하면 두더지 캘리브레이션부터)
         python main.py --mouse         (테스트용 — 카메라 없이 마우스를 시선 대신 사용)
         python main.py --recalibrate   (저장된 캘리브레이션을 무시하고 처음부터 다시)
+        python main.py --check         (시작할 때 숫자 맞추기로 정확도 확인 — 새로 보정한 직후에는 자동으로 함)
         python main.py --camera 1 --hd (카메라 번호 / 고해상도 — 원본과 같은 옵션)
 종료:   메뉴창 오른쪽 아래 "종료" 버튼, 캘리브레이션 중 ESC, 또는 터미널에서 Ctrl+C
 
@@ -24,6 +25,7 @@ main.py — 시선 추적 데모 실행 파일 (두더지 캘리브레이션 →
 import argparse
 import math
 import signal
+import socket
 import sys
 import time
 from collections import deque
@@ -42,6 +44,8 @@ EYE_LOST_SEC = 0.3   # 이 시간 이상 눈이 안 잡히면 X 표시 (잠깐 �
 # 자동 보정 — 실제 마우스 클릭을 "그곳을 보고 있었다"로 쓸지 판단하는 기준
 MOUSE_MOVE_MIN_PX = 40      # 클릭 전 1.5초 동안 마우스가 이만큼은 움직였어야 함 (목표를 찾아간 클릭)
 MOUSE_SETTLE_PX = 15        # 클릭 직전 0.12초 동안은 거의 멈춰 있어야 함 (목표에 도착해서 누른 클릭)
+CALIB_PORT = 47322          # 미니게임이 맞힌 별·두더지 위치를 보내오는 UDP 포트 (minigames.py 와 같아야 함)
+GAME_SETTLE_SEC = 0.30      # 맞힌 뒤 이만큼 기다렸다가(터지는 연출을 보는 동안의 눈 데이터를 모은 뒤) 샘플로 사용
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
@@ -60,6 +64,7 @@ SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
 WINK_CYCLE = ["both", "left", "right", "off"]
 from ui.gaze_widgets import GazeInteraction
 from calibration.mole_calibration import MoleCalibrationWindow
+from calibration.number_check import NumberCheckWindow
 from ui.seal_cursor import SealCursorOverlay, DEFAULT_OPACITY, OPACITY_STEP, MIN_OPACITY, MAX_OPACITY
 from ui.menu_bar import MenuDock, MenuPanel
 from ui.onscreen_keyboard import OnScreenKeyboard
@@ -109,6 +114,9 @@ class DemoApp(QtCore.QObject):
         self.blink_gesture = BlinkGesture()   # 두 눈 연속 깜빡임: 3번 → 뒤로가기, 5번 → 일시정지/다시 시작
         self.synthetic_until = 0.0     # 우리가 만든 클릭 직후엔 '실제 마우스 클릭'으로 착각해 학습하지 않도록
         self.calib_win = None
+        self.checking = False          # 숫자 맞추기(정확도 확인) 중
+        self.number_win = None
+        self.check_err = None          # 마지막 숫자 맞추기의 평균 오차(px)
 
         # 화면 부품들
         self.interaction = GazeInteraction()
@@ -164,6 +172,7 @@ class DemoApp(QtCore.QObject):
             self.mouse_poll = QtCore.QTimer(self)
             self.mouse_poll.timeout.connect(self._on_mouse_poll)
             self.mouse_poll.start(16)
+        self._open_game_socket()
         self.app.aboutToQuit.connect(self._shutdown)
 
     def start(self):
@@ -181,6 +190,8 @@ class DemoApp(QtCore.QObject):
             self._setup_model(saved["W"], saved["base"], saved["anchor_feats"], saved["anchor_labels"],
                               saved["anchor_weights"], saved["online_feats"], saved["online_labels"])
             self._enter_tracking()
+            if self.args.check:
+                QtCore.QTimer.singleShot(400, self.start_number_check)
         else:
             self.start_calibration()
 
@@ -219,6 +230,8 @@ class DemoApp(QtCore.QObject):
                 msg += f", 검증 오차 약 {val_err:.0f}px"
             print(msg)
         self._enter_tracking()
+        if not self.mouse_mode or self.args.check:      # 새 보정 직후 숫자 맞추기로 정확도 확인 + 추가 학습
+            QtCore.QTimer.singleShot(400, self.start_number_check)
 
     def _setup_model(self, W, base, anchor_feats, anchor_labels, anchor_weights,
                      online_feats=None, online_labels=None):
@@ -234,6 +247,73 @@ class DemoApp(QtCore.QObject):
         if self.calib_err is not None:
             extra["calib_err"] = np.array(self.calib_err, dtype=float)
         save_calibration(self.session.W, self.session.base, extra)
+
+    # ── 미니게임에서 맞힌 별·두더지 → 자동 보정 (minigames.py 가 "T,x,y" 를 UDP 로 보내줌) ──
+    def _open_game_socket(self):
+        self.game_sock = None
+        if self.mouse_mode:
+            return
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind(("127.0.0.1", CALIB_PORT))
+            s.setblocking(False)
+            self.game_sock = s
+        except OSError as e:
+            print(f"[미니게임 보정] 포트 {CALIB_PORT} 를 열 수 없어요({e}) → 미니게임은 보정에 쓰지 않아요.")
+            return
+        self.game_poll = QtCore.QTimer(self)
+        self.game_poll.timeout.connect(self._poll_game_targets)
+        self.game_poll.start(30)
+
+    def _poll_game_targets(self):
+        while True:
+            try:
+                data, _ = self.game_sock.recvfrom(256)
+            except (BlockingIOError, InterruptedError, OSError):
+                break
+            try:
+                tag, xs, ys = data.decode("ascii", "ignore").split(",")[:3]
+                x, y = float(xs), float(ys)
+            except ValueError:
+                continue
+            if tag == "T" and self._learning_ready() and not self.checking and not self.paused:
+                QtCore.QTimer.singleShot(int(GAME_SETTLE_SEC * 1000), lambda x=x, y=y: self._learn_game(x, y))
+
+    def _learn_game(self, x, y):
+        if self._learning_ready() and not self.checking and not self.paused:
+            self._learn(time.time(), x, y, "game")
+
+    # ── 숫자 맞추기: 보정 직후 정확도 확인 + 통과한 숫자를 정답으로 자동 보정에 반영 ──
+    def start_number_check(self):
+        if self.checking or self.calibrating or self.paused or not self.tracking_started:
+            return
+        self.checking = True
+        self.interaction.enabled = False
+        self.interaction.reset()
+        self.panel_open = self.keyboard_open = False
+        for w in (self.dock, self.panel, self.keyboard):
+            w.hide()
+        self.number_win = NumberCheckWindow(self.geo, self._on_check_sample, self._on_check_done)
+        self.number_win.showFullScreen()
+        self.number_win.activateWindow()
+        self._raise_cursor()
+        QtCore.QTimer.singleShot(200, self._raise_cursor)
+
+    def _on_check_sample(self, t, x, y):
+        """숫자를 통과 = 그 숫자를 보고 있었음 → 응시 클릭과 같은 방식으로 자동 보정 샘플로 사용."""
+        self._show_check()
+        if self._learning_ready():
+            self._learn(t, x, y, "dwell")
+
+    def _on_check_done(self, errs, skipped, cancelled):
+        self.checking = False
+        self.number_win = None
+        self.interaction.enabled = True
+        self.dock.show()
+        if errs:
+            self.check_err = sum(errs) / len(errs)
+            print(f"[숫자 맞추기] 평균 오차 약 {self.check_err:.0f}px (통과 {len(errs)}개, 건너뜀 {skipped}개)")
+        self._apply_state()
 
     def _on_calib_cancelled(self):
         self.calibrating = False
@@ -311,8 +391,18 @@ class DemoApp(QtCore.QObject):
 
     def _on_gaze(self, x, y, now):
         self.last_gaze = (x, y)
+        try:                                            # 미니게임(minigames.py)에 시선 좌표 전달 (UDP, 로컬)
+            if getattr(self, "_gs", None) is None:
+                import socket
+                self._gs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._gs.sendto(f"{x:.0f},{y:.0f}".encode(), ("127.0.0.1", 47321))
+        except Exception:
+            pass
         self.cursor.move_to(x, y, now)                  # 시선 커서 + 궤적
-        self.dock.update_gaze(x, y)                     # 커서가 가까이 오면 메뉴 아이콘이 나타남
+        if self.checking and self.number_win is not None:
+            self.number_win.on_gaze(x, y, now)          # 숫자 맞추기에 시선 전달
+        if not self.checking:
+            self.dock.update_gaze(x, y)                 # 커서가 가까이 오면 메뉴 아이콘이 나타남
         self.interaction.update_gaze(x, y, now)         # 응시 클릭 + 하이라이트
         self.scroller.update(x, y, now, self._scroll_blocked())    # 스크롤 모드 (꺼져 있으면 아무것도 안 함)
         if self.dwell_on and self._clicking_ready():   # 응시 클릭: 데모 버튼·메뉴 위가 아닐 때만 (버튼은 자기 방식대로 눌림)
@@ -326,7 +416,7 @@ class DemoApp(QtCore.QObject):
 
     # ── 시선 클릭 (윙크 / 응시) ─────────────────────────────────────
     def _clicking_ready(self):
-        return (not self.mouse_mode and not self.calibrating and not self.paused
+        return (not self.mouse_mode and not self.calibrating and not self.paused and not self.checking
                 and self.session is not None and self.tracking_started)
 
     def _over_own_window(self, x, y):
@@ -349,7 +439,7 @@ class DemoApp(QtCore.QObject):
 
     def _scroll_blocked(self):
         """스크롤 띠를 잠깐 멈춰야 하는 상태 (모드는 그대로 두고 동작만 멈춤)."""
-        return (self.paused or self.calibrating or self.keyboard_open or self.panel_open
+        return (self.paused or self.calibrating or self.checking or self.keyboard_open or self.panel_open
                 or self.interaction.over_button())
 
     def _on_scroll_auto_off(self):
@@ -418,6 +508,7 @@ class DemoApp(QtCore.QObject):
             "adapt_count": self.adapt.count if self.adapt else 0,
             "big_fixes": self.adapt.big_fixes if self.adapt else 0,
             "recent_acc": self.adapt.recent_accuracy() if self.adapt else None,
+            "check_err": self.check_err,
         }
 
     def _load_settings(self):
@@ -616,6 +707,8 @@ def main():
     ap.add_argument("--hd", action="store_true",
                     help="웹캠이 720p/1080p를 지원하면 더 높은 해상도로 시도 (기본은 640x480)")
     ap.add_argument("--mouse", action="store_true", help="카메라 없이 마우스로 UI 테스트")
+    ap.add_argument("--check", action="store_true",
+                    help="시작할 때 숫자 맞추기(정확도 확인)를 한 번 함 (새로 보정하면 자동으로 함)")
     ap.add_argument("--recalibrate", action="store_true",
                     help="저장된 캘리브레이션을 무시하고 처음부터 다시 함")
     args = ap.parse_args()

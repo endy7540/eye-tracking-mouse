@@ -55,6 +55,7 @@ from pathlib import Path
 #  1. 설정 (숫자를 바꾸면 느낌이 바뀝니다)
 # ════════════════════════════════════════════════════════════════
 GAME_DWELL = 0.10        # 게임 중: 이만큼만 바라봐도 인정
+LIFE_SCALE = 1.4         # 별·두더지가 머무는 시간 배수 (1.0 = 예전 속도, 클수록 느긋 — --life 로 바꿈)
 BOMB_DWELL = 0.20        # 폭탄은 스쳐 보는 것만으로 터지지 않게 조금 더 길게
 NUMBER_DWELL = 0.30      # 숫자 순서 찍기: 훑어보다 스치는 것과 구분하려고 조금 더 길게
 ODD_DWELL = 0.35         # 다른 그림 찾기: 정답으로 인정하는 시간
@@ -68,6 +69,7 @@ RESULT_ARM_SEC = 0.8     # 결과 화면에서 버튼이 눌리기 시작하는 
 EFFECT_LIFE = 1.0
 GAZE_PORT = 47321
 GAZE_FRESH = 0.30        # 시선 소식이 이보다 오래되면 마우스를 씀
+CALIB_PORT = 47322       # 맞힌 별·두더지 위치를 눈동자 마우스(자동 보정)에 알려주는 UDP 포트
 
 # 두더지 그림(800x800) 안의 위치 비율 (프로젝트의 mole.png 기준)
 MOLE_NOSE_Y = 0.52       # 코 — 이 지점이 목표 위치
@@ -174,6 +176,7 @@ class MiniGame:
         self.score = self.combo = self.max_combo = self.hits = self.misses = 0
         self.penalty = 0.0
         self.effects, self.events, self.ring = [], [], None
+        self.samples = []                      # 보정에 쓸 "여기를 보고 있었다" 기록 (x, y, 시각)
         self.flash_t = -10.0
         self.dwell.reset()
         self.reset_game()
@@ -225,6 +228,10 @@ class MiniGame:
     def pop_events(self):
         ev, self.events = self.events, []
         return ev
+
+    def pop_samples(self):
+        s, self.samples = self.samples, []
+        return s
 
     # ── 점수·효과 도우미 ──
     def gain(self, base=10):
@@ -300,7 +307,7 @@ class MoleGame(MiniGame):
         if now >= self.next_spawn and sum(1 for m in self.moles if m.state == "up") < cap:
             hole = self._pick_hole()
             if hole is not None:
-                self.moles.append(_Mole(hole, now, lerp(1.7, 0.95, prog)))
+                self.moles.append(_Mole(hole, now, lerp(1.7, 0.95, prog) * LIFE_SCALE))
                 self.last_hole = hole
                 self.next_spawn = now + lerp(0.7, 0.35, prog) + self.rng.uniform(0.0, 0.2)
 
@@ -324,6 +331,7 @@ class MoleGame(MiniGame):
             self.burst(hx, hy, now)
             self.popup(hx, hy - 0.55 * self.S, f"+{pts}", now)
             self.events.append("good")
+            self.samples.append((hx, hy, now))                  # 두더지 코 위치 = 보고 있던 곳
 
     def result_line(self):
         return f"잡은 두더지 {self.hits}마리 · 놓친 두더지 {self.misses}마리 · 최대 콤보 {self.max_combo}"
@@ -340,6 +348,7 @@ class SparkleGame(MiniGame):
     tagline = "반짝이는 별을\n눈으로 터뜨려요"
     accent = (248, 196, 60)
     bombs = False
+    calib = True                                 # 터뜨린 별 위치를 보정에 사용 (폭탄 게임은 끔)
     howto = ["반짝이는 별이 여기저기 나타나요.",
              "별을 0.1초만 바라보면 팡! 터져요.",
              "연속으로 터뜨리면 콤보 점수!",
@@ -369,7 +378,7 @@ class SparkleGame(MiniGame):
             self._id += 1
             it.id, it.x, it.y, it.r, it.t0 = self._id, x, y, r, now
             it.kind = "bomb" if bomb else "star"
-            it.life = 1.7 if bomb else lerp(1.5, 0.9, prog)
+            it.life = 1.7 if bomb else lerp(1.5, 0.9, prog) * LIFE_SCALE
             it.state, it.t_state = "live", now
             self.items.append(it)
             return
@@ -408,6 +417,8 @@ class SparkleGame(MiniGame):
                 self.burst(target.x, target.y, now)
                 self.popup(target.x, target.y - target.r, f"+{pts}", now)
                 self.events.append("good")
+                if self.calib:
+                    self.samples.append((target.x, target.y, now))   # 별 중심 = 보고 있던 곳
             else:
                 self.score = max(0, self.score - 20)
                 self.lose_combo()
@@ -423,6 +434,7 @@ class SparkleGame(MiniGame):
 
 class BombGame(SparkleGame):
     kind = "bombs"
+    calib = False
     title = "폭탄 피하기"
     tagline = "별은 터뜨리고\n폭탄은 피하세요"
     accent = (224, 88, 80)
@@ -885,7 +897,7 @@ def draw_shape(p, shape, x, y, r, color, edge=INK):
 
 
 class MiniGameWindow(QtWidgets.QWidget):
-    def __init__(self, windowed=False, mute=False, hide_cursor=False, gaze_port=GAZE_PORT):
+    def __init__(self, windowed=False, mute=False, hide_cursor=False, gaze_port=GAZE_PORT, calib_port=CALIB_PORT):
         super().__init__()
         geo = QtWidgets.QApplication.primaryScreen().geometry()
         if windowed:
@@ -902,6 +914,8 @@ class MiniGameWindow(QtWidgets.QWidget):
         self.fonts_family = self._load_font()
         self.sounds = Sounds(not mute)
         self.gaze = GazeListener(gaze_port)
+        self.calib_port = calib_port
+        self._cs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.mode, self.idx, self.game = "menu", 0, None        # mode: menu / howto / game
         self.slide, self.slide_t = 0, -10.0
         self.bdwell = Dwell()
@@ -912,6 +926,17 @@ class MiniGameWindow(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(16)
+
+    # ═════════ 보정 데이터 보내기 ═════════
+    def _send_target(self, x, y):
+        """맞힌 별·두더지의 화면 좌표를 눈동자 마우스에 알려줌 (UDP, 이 PC 안에서만). 받는 쪽이 없으면 그냥 버려짐."""
+        if not self.calib_port:
+            return
+        try:
+            g = self.mapToGlobal(QtCore.QPoint(int(x), int(y)))
+            self._cs.sendto(f"T,{g.x()},{g.y()}".encode(), ("127.0.0.1", self.calib_port))
+        except OSError:
+            pass
 
     # ═════════ 입력 ═════════
     def _pointer(self, now):
@@ -1033,6 +1058,8 @@ class MiniGameWindow(QtWidgets.QWidget):
             self.game.update(now, self.ptr)
             for ev in self.game.pop_events():
                 self.sounds.play(ev)
+            for sx, sy, _t in self.game.pop_samples():
+                self._send_target(sx, sy)
         self._buttons_step(now, self.ptr)
         self.update()
 
@@ -1535,7 +1562,7 @@ class MiniGameWindow(QtWidgets.QWidget):
 
 
 def main():
-    global GAME_DWELL, MENU_DWELL
+    global GAME_DWELL, MENU_DWELL, LIFE_SCALE
     ap = argparse.ArgumentParser(description="눈동자 마우스 시연용 시선 미니게임 모음")
     ap.add_argument("--windowed", action="store_true", help="전체화면 대신 창으로 실행 (테스트용)")
     ap.add_argument("--mute", action="store_true", help="효과음 끄기")
@@ -1543,7 +1570,11 @@ def main():
     ap.add_argument("--gaze-port", type=int, default=GAZE_PORT, help="눈동자 마우스가 시선을 보내는 UDP 포트 (0 = 안 받음)")
     ap.add_argument("--game-dwell", type=float, default=None, metavar="SEC", help=f"게임 중 인정 시간 (기본 {GAME_DWELL})")
     ap.add_argument("--menu-dwell", type=float, default=None, metavar="SEC", help=f"메뉴 버튼 인정 시간 (기본 {MENU_DWELL})")
+    ap.add_argument("--life", type=float, default=None, metavar="배수", help=f"별·두더지가 머무는 시간 배수 (기본 {LIFE_SCALE}, 클수록 느긋)")
+    ap.add_argument("--calib-port", type=int, default=CALIB_PORT, help="맞힌 별·두더지를 눈동자 마우스 자동 보정에 보내는 UDP 포트 (0 = 안 보냄)")
     args = ap.parse_args()
+    if args.life is not None:
+        LIFE_SCALE = max(0.5, args.life)
     if args.game_dwell is not None:
         GAME_DWELL = max(0.02, args.game_dwell)
     if args.menu_dwell is not None:
@@ -1552,7 +1583,7 @@ def main():
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv)
-    win = MiniGameWindow(windowed=args.windowed, mute=args.mute, hide_cursor=args.hide_cursor, gaze_port=args.gaze_port)
+    win = MiniGameWindow(windowed=args.windowed, mute=args.mute, hide_cursor=args.hide_cursor, gaze_port=args.gaze_port, calib_port=args.calib_port)
     if args.windowed:
         win.show()
     else:
