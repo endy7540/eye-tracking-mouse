@@ -214,13 +214,17 @@ class SealCursorOverlay(QtWidgets.QWidget):
     # ── 다시 그릴 영역 계산 ───────────────────────────────────────
     def _fade(self):
         now = time.time()
+        popped = False
         while self.trail and now - self.trail[0][0] > TRAIL_SEC:
             self.trail.popleft()
+            popped = True
         if self.check_t is not None and now - self.check_t > CHECK_SEC:
             self.check_t = None
             self._schedule()                     # 사라진 체크 자리를 지움
-        elif self.trail or self.check_t is not None:
+        elif popped or self.trail or self.check_t is not None:
             self._schedule()
+        if popped and not self.trail:
+            self.update()                        # 잔상이 마지막으로 다 사라진 순간: 화면 전체를 한 번 깨끗이 다시 그려 찌꺼기 제거
 
     def _bounds(self):
         rect = QtCore.QRect()
@@ -230,7 +234,7 @@ class SealCursorOverlay(QtWidgets.QWidget):
             if self.check_t is not None:          # 체크는 커서 위쪽에 그려지므로 그 자리까지 다시 그림
                 top = int(self.pos_.y() - (CURSOR_R + 28 + CHECK_R * 1.3))
                 rect = rect.united(QtCore.QRect(int(self.pos_.x()) - 34, top - 4, 68, 68))
-        tm = TRAIL_W + 8                          # 잔상 굵기 + 그림자 여유
+        tm = TRAIL_W * 2 + 8                      # 잔상 굵기 + 그림자 + 곡선 보정으로 삐져나오는 여유
         for _, pt in self.trail:
             rect = rect.united(QtCore.QRect(int(pt.x()) - tm, int(pt.y()) - tm, 2 * tm, 2 * tm))
         return rect

@@ -562,7 +562,7 @@ class DemoApp(QtCore.QObject):
               "theme": theme.current_key()}
         self.panel.update_state(st)
         self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
-        self.scroller.set_enabled(self.scroll_on)       # 스크롤 로직도 같은 값을 따라감
+        self.scroller.set_enabled(self.scroll_on and not self.paused)   # 스크롤 로직도 같은 값을 따라감 (일시정지 중엔 스크롤 띠도 숨김)
         self.dock.set_menu_open(self.panel_open)    # 메뉴창이 열려 있으면 아이콘만 숨기고 토글은 그대로
 
         if self.paused:

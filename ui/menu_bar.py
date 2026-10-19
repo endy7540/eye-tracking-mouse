@@ -11,7 +11,8 @@ MenuDock  (평소에 떠 있는 부분 — 화면 오른쪽 끝 세로줄)
       ★ 위치를 화면 오른쪽 끝 세로줄(가로 90% 바깥)에 둔 이유: 팀원분 그림의 스크롤 영역(위·아래 15%, 가로 10~90%),
         브라우저 툴바, 작업표시줄, 메뉴창 어느 것과도 겹치지 않는 자리라서.
     - 토글 왼쪽: 지금 켜져 있는 모드를 짧게 표시하는 상태 글자 (아이콘과 같이 나타남)
-    - 일시정지 중에는 아이콘이 자물쇠로 바뀌고 항상 보임 (커서가 숨겨져서 다가가는 걸 알 수 없으므로).
+    - 일시정지 중에는 아이콘이 자물쇠로 바뀌고 "일시정지 중" 문구가 뜸. 일시정지 직후 INTRO_SEC 동안 보여준 뒤에는
+      평소처럼 시선이 멀어지면 투명해지고 가까이 오면 나타남. 스크롤 토글은 일시정지 중 숨김.
       자물쇠를 3초 바라보면 다시 활성화
     - 메뉴창이 열려 있는 동안(set_menu_open(True))은 아이콘·상태 글자만 숨기고 스크롤 토글은 그대로 둠
 
@@ -901,7 +902,11 @@ class MenuDock(QtWidgets.QWidget):
 
     # ── main.py에서 호출 ─────────────────────────────────────────
     def set_locked(self, locked):
+        was = self.icon.locked
         self.icon.set_locked(locked)
+        self.scroll.setVisible(not locked)            # 일시정지 중에는 스크롤 토글도 안 보이게
+        if locked and not was:
+            self.hold_until = time.time() + INTRO_SEC  # 일시정지 직후엔 자물쇠 위치를 잠깐 보여줌 → 이후 멀어지면 투명
         self._relayout()
 
     def set_status_text(self, text):
@@ -947,20 +952,21 @@ class MenuDock(QtWidgets.QWidget):
         pw, _ = self._pill_size()
         left = pw + 12 if pw else 0
         w = left + ICON_PX
-        h = SCROLL_H + SCROLL_GAP + ICON_PX
+        top = 0 if self.icon.locked else SCROLL_H + SCROLL_GAP   # 일시정지 중엔 스크롤 토글이 없으니 자물쇠만 남김
+        h = top + ICON_PX
         self.setFixedSize(w, h)
         self.scroll.move(w - SCROLL_W, 0)
-        self.icon.move(w - ICON_PX, SCROLL_H + SCROLL_GAP)
+        self.icon.move(w - ICON_PX, top)
         area = QtWidgets.QApplication.primaryScreen().availableGeometry()
         self.move(area.right() + 1 - EDGE_MARGIN - w, area.bottom() + 1 - EDGE_MARGIN - h)
         self.update()
 
     # ── 나타나기/사라지기 ────────────────────────────────────────
     def _target_alpha(self):
-        if self.icon.locked or time.time() < self.hold_until:
+        if time.time() < self.hold_until:
             return 1.0
         if self.gaze is None:
-            return 0.0
+            return 1.0 if self.icon.locked else 0.0   # 일시정지인데 시선을 아직 모르면 자물쇠를 보여줌 (못 찾는 일 없게)
         c = self.icon.mapToGlobal(QtCore.QPoint(self.icon.width() // 2, self.icon.height() // 2))
         d = math.hypot(self.gaze[0] - c.x(), self.gaze[1] - c.y())
         return max(0.0, min(1.0, (FAR_PX - d) / (FAR_PX - NEAR_PX)))
@@ -982,7 +988,7 @@ class MenuDock(QtWidgets.QWidget):
         th = theme.current()
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        rect = QtCore.QRectF(1, (SCROLL_H - ph) / 2, pw - 2, ph)   # 스크롤 토글 왼쪽, 세로 가운데
+        rect = QtCore.QRectF(1, self.icon.y() + ICON_PX - 7 - ph, pw - 2, ph)   # 메뉴 아이콘(자물쇠) 왼쪽, 원의 아래쪽 끝에 맞춤
         p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.7 * a), 2))
         p.setBrush(QtGui.QColor(255, 255, 255, int(220 * a)))
         p.drawRoundedRect(rect, ph / 2, ph / 2)
