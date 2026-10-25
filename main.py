@@ -588,13 +588,21 @@ class DemoApp(QtCore.QObject):
         self._apply_state()
 
     def pause(self):
-        """일시정지: 커서만 숨기고 프로그램은 뒤에서 계속 실행. 메뉴 아이콘은 자물쇠로 바뀜."""
+        """일시정지: 커서만 숨기고 프로그램은 뒤에서 계속 실행. 메뉴 아이콘은 자물쇠로 바뀜.
+        열려 있던 메뉴창·화상 키보드·상태 확인 창도 같이 닫음 (일시정지 중엔 시선으로 누를 수 없어서)."""
         self.paused = True
         self.interaction.paused = True
         self.interaction.reset()
         self.cursor.set_paused(True)
         self.panel_open = False
         self.panel.hide()
+        if self.keyboard_open:                  # 일시정지 중엔 키를 누를 수 없으니 화상 키보드도 닫음
+            self.keyboard_open = False
+            self.keyboard.hide()
+        if self.status_win.isVisible():         # 상태 확인 창도 닫음 (카메라 미리보기도 끔)
+            if not self.mouse_mode:
+                self.worker.preview_on = False
+            self.status_win.hide()
         self.dock.set_locked(True)
         self.dock.show()
         self._apply_state()
