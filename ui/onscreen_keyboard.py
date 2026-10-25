@@ -284,13 +284,13 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         text = compose_jamo(self.tokens)
         shown = text[-30:]                                   # 너무 길면 뒷부분만
         th = theme.current()
-        caret = f'<span style="color:{th["main"].name()};">|</span>'           # 깜빡이는 자리 표시 = 테마색
+        caret = f'<span style="color:{th["accent"].name()};">|</span>'         # 깜빡이는 자리 표시 = 테마 강조색
         if shown:
             body = html.escape(shown).replace(" ", "&nbsp;")
         else:
-            d = th["deep"]                                    # 진한 테마색을 흰색과 섞은 연한 글자색
-            hint = QtGui.QColor(int(d.red() * 0.45 + 255 * 0.55), int(d.green() * 0.45 + 255 * 0.55),
-                                int(d.blue() * 0.45 + 255 * 0.55))
+            d, b = th["deep"], th["chip"]                     # 글자색을 입력칸 바탕색과 섞은 연한 글자색
+            hint = QtGui.QColor(int(d.red() * 0.45 + b.red() * 0.55), int(d.green() * 0.45 + b.green() * 0.55),
+                                int(d.blue() * 0.45 + b.blue() * 0.55))
             body = f'<span style="color:{hint.name()};">여기에 입력한 글자가 보여요</span>'
         self.display.setText(body + caret)
 
@@ -305,8 +305,8 @@ class OnScreenKeyboard(QtWidgets.QWidget):
         self.title_label.setStyleSheet(f"color: {theme.css(th['deep'])}; background: transparent;")
         self.lang_label.setStyleSheet(f"color: {theme.css(th['deep'], 0.8)}; background: transparent;")
         self.target_label.setStyleSheet(f"color: {theme.css(th['deep'])}; background: transparent;")
-        self.display.setStyleSheet("QLabel { background-color: rgba(255, 255, 255, 240);"
-                                   f" border: 2px solid {theme.css(th['main'], 0.6)}; border-radius: 14px;"
+        self.display.setStyleSheet(f"QLabel {{ background-color: {theme.css(th['chip'])};"
+                                   f" border: 2px solid {theme.css(th['border'])}; border-radius: 14px;"
                                    f" padding: 4px 16px; color: {theme.css(th['deep'])}; }}")
         self.update()
         for b in self.findChildren(GazeButton):
