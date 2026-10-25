@@ -102,13 +102,13 @@ class GazeButton(QtWidgets.QPushButton):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         r = QtCore.QRectF(self.rect()).adjusted(3, 3, -3, -3)
         hl = self.is_highlighted()
-        if self.themed:                        # 테마색: 흰 바탕(켜짐 = 연한 테마색) + 테마색 테두리, 하이라이트 = 진한 테마색
+        if self.themed:                        # 테마색: 카드색 바탕(켜짐 = 연한 테마색) + 테마 테두리, 하이라이트 = 테마 강조 테두리
             th = theme.current()
-            bg = QtGui.QColor(th["light"]) if self.on else QtGui.QColor(255, 255, 255, 225)
+            bg = QtGui.QColor(th["light"]) if self.on else QtGui.QColor(th["card"])
             if not self.isEnabled():
-                bg = QtGui.QColor(255, 255, 255, 130)
-            edge = th["deep"] if hl else theme.with_alpha(th["main"], 0.55 if self.isEnabled() else 0.25)
-            gauge, ink = th["main"], (th["deep"] if self.isEnabled() else theme.with_alpha(th["deep"], 0.45))
+                bg = theme.with_alpha(th["card"], 0.5)
+            edge = th["ring"] if hl else (th["border"] if self.isEnabled() else theme.with_alpha(th["border"], 0.4))
+            gauge, ink = th["gauge"], (th["deep"] if self.isEnabled() else theme.with_alpha(th["deep"], 0.45))
         else:                                  # 기본: 갈색 (상태 확인 창 등)
             bg = QtGui.QColor(theme.BTN_ON if self.on else theme.BTN_BG)
             edge = theme.HIGHLIGHT if hl else theme.BTN_EDGE
@@ -148,10 +148,10 @@ class CloseButton(GazeButton):
             p.setBrush(QtGui.QColor(232, 17, 35))          # 크롬 닫기 버튼의 빨강
             p.drawRoundedRect(r, 10, 10)
         ink = theme.current()["deep"] if self.themed else theme.INK
-        gauge = theme.current()["main"] if self.themed else theme.GAUGE
-        if self.themed and not hl:                         # 테마 모양: 흰 동그라미 바탕
-            p.setPen(QtGui.QPen(theme.with_alpha(theme.current()["main"], 0.6), 2))
-            p.setBrush(QtGui.QColor(255, 255, 255, 235))
+        gauge = theme.current()["gauge"] if self.themed else theme.GAUGE
+        if self.themed and not hl:                         # 테마 모양: 카드색 동그라미 바탕
+            p.setPen(QtGui.QPen(theme.current()["border"], 2))
+            p.setBrush(theme.current()["chip"])
             p.drawEllipse(r)
         if self.progress > 0:                              # 응시 진행률을 테두리로 표시
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255) if hl else gauge, 4))
