@@ -17,9 +17,9 @@ theme.py — 데모 전체가 같이 쓰는 폰트·색상·이미지 + 메뉴·
     1) 기본 색 (BG, INK, PANEL_BG, HIGHLIGHT, RED ...)
        캘리브레이션(두더지) 화면·상태 확인 창이 쓰는 갈색 계열 색. 테마와 상관없이 항상 그대로입니다.
        ※ 다른 담당자 파일(calibration/mole_calibration.py 등)도 이 이름을 쓰므로 이름·값을 바꾸지 마세요.
-    2) 테마 색 (THEMES)
-       메뉴창·메뉴바 아이콘·스크롤 토글·커서·화상 키보드에 적용되는 색. 메뉴창 아래쪽 동그라미로 바꿀 수 있고, 기본은 "하늘(파랑)".
-       각 테마는 main(대표색) / deep(진한 색: 글자·아이콘) / light(연한 색: 아이콘 바탕) 세 가지 색으로 이뤄짐.
+    2) 테마 색 (THEMES, 8종: 하늘·민트·라벤더·노을·체리·슬레이트·화이트·다크)
+       메뉴창·메뉴 아이콘·스크롤 토글·커서·화상 키보드에 적용되는 색. 메뉴창 "설정" 화면의 바둑알로 바꿀 수 있고,
+       기본은 "하늘(파랑)". 테마마다 카드·글자·강조·그림자 색을 따로 가짐 (아래 THEMES 위 설명 참고).
        지금 테마는 current()로 읽고, set_theme("mint")처럼 바꿉니다.
 """
 from pathlib import Path
@@ -45,15 +45,49 @@ RED = QtGui.QColor(224, 88, 80)
 YELLOW = QtGui.QColor(248, 196, 60)
 GREEN = QtGui.QColor(70, 180, 110)
 
-# ── 테마 색 (메뉴창·메뉴바 아이콘·커서에만 적용) ─────────────────────────
+# ── 테마 색 (메뉴창·메뉴 아이콘·스크롤 토글·커서·화상 키보드) ─────────────────
 #   key: 설정 파일에 저장되는 이름 / name: 메뉴에 보이는 이름
+#   테마마다 아래 색을 가짐 (theme.current()["card"]처럼 꺼내 씀, 색은 QColor)
+#     main   대표색 (메뉴 아이콘 바탕)          deep   글자·아이콘 색
+#     light  아이콘 뒤 동그라미 바탕            accent 켜짐 스위치·"윙크하면 선택" 표시·강조
+#     on     accent 위 글자색                   main_ink  main 위 글자·아이콘(≡) 색
+#     ring   하이라이트 테두리                  gauge  응시 게이지
+#     card   카드 바탕                          chip   상태 알약·스크롤 토글(꺼짐) 바탕
+#     panel  메뉴창·키보드 배경 (반투명)        border 카드 테두리      edge  메뉴창 테두리
+#     off    꺼짐 스위치                        trail  시선 잔상
+#     stone / stone_side  바둑알 윗면 / 옆면(두께)
+#     shadow 그림자 세기 (화이트는 흰 바탕끼리 구별되게 진하게)   dark  다크 테마 여부
+WHITE_ = (255, 255, 255)
+
+
+def _color_theme(key, name, main, deep, light):
+    """색깔 테마 (하늘·민트 …): 흰 카드 + 대표색."""
+    return {"key": key, "name": name, "main": main, "deep": deep, "light": light,
+            "accent": main, "on": WHITE_, "main_ink": WHITE_, "ring": deep, "gauge": main,
+            "card": (255, 255, 255, 205), "chip": (255, 255, 255, 235), "panel": main + (77,),
+            "border": main + (115,), "edge": main + (242,), "off": (160, 166, 176), "trail": main,
+            "stone": main, "stone_side": deep, "shadow": 0.35, "dark": False}
+
+
 THEMES = [
-    {"key": "sky",      "name": "하늘",     "main": (59, 142, 234), "deep": (24, 84, 168),  "light": (220, 235, 255)},
-    {"key": "mint",     "name": "민트",     "main": (32, 178, 150), "deep": (14, 112, 95),  "light": (214, 245, 237)},
-    {"key": "lavender", "name": "라벤더",   "main": (138, 106, 228), "deep": (88, 60, 175), "light": (236, 229, 255)},
-    {"key": "sunset",   "name": "노을",     "main": (238, 118, 88), "deep": (176, 68, 42),  "light": (255, 228, 218)},
-    {"key": "cherry",   "name": "체리",     "main": (226, 92, 146), "deep": (160, 40, 96),  "light": (255, 225, 238)},
-    {"key": "slate",    "name": "슬레이트", "main": (96, 114, 140), "deep": (46, 60, 82),   "light": (226, 232, 241)},
+    _color_theme("sky", "하늘", (59, 142, 234), (24, 84, 168), (220, 235, 255)),
+    _color_theme("mint", "민트", (32, 178, 150), (14, 112, 95), (214, 245, 237)),
+    _color_theme("lavender", "라벤더", (138, 106, 228), (88, 60, 175), (236, 229, 255)),
+    _color_theme("sunset", "노을", (238, 118, 88), (176, 68, 42), (255, 228, 218)),
+    _color_theme("cherry", "체리", (226, 92, 146), (160, 40, 96), (255, 225, 238)),
+    _color_theme("slate", "슬레이트", (96, 114, 140), (46, 60, 82), (226, 232, 241)),
+    # 화이트: 흰 메뉴창·흰 카드 → 그림자를 진하게 해서 칸을 구별. 커서는 흰 바둑알
+    {"key": "white", "name": "화이트", "main": (246, 247, 250), "deep": (40, 44, 54), "light": (236, 239, 244),
+     "accent": (58, 64, 78), "on": WHITE_, "main_ink": (40, 44, 54), "ring": (58, 64, 78), "gauge": (58, 64, 78),
+     "card": (255, 255, 255, 252), "chip": (255, 255, 255, 255), "panel": (250, 251, 253, 215),
+     "border": (204, 209, 218, 255), "edge": (186, 192, 204, 255), "off": (170, 176, 186), "trail": (150, 156, 170),
+     "stone": (246, 246, 246), "stone_side": (176, 180, 188), "shadow": 1.0, "dark": False},
+    # 다크: 어두운 카드 + 밝은 글자. 커서는 검은 바둑알 (어두운 화면에서도 보이게 얇은 밝은 테두리)
+    {"key": "black", "name": "다크", "main": (30, 32, 38), "deep": (236, 239, 245), "light": (58, 62, 74),
+     "accent": (232, 235, 242), "on": (26, 28, 34), "main_ink": (236, 239, 245), "ring": (232, 235, 242),
+     "gauge": (232, 235, 242), "card": (40, 43, 51, 240), "chip": (56, 60, 72, 255), "panel": (20, 22, 27, 205),
+     "border": (78, 84, 98, 255), "edge": (92, 98, 114, 255), "off": (80, 86, 100), "trail": (120, 126, 140),
+     "stone": (44, 46, 52), "stone_side": (8, 8, 10), "shadow": 0.6, "dark": True},
 ]
 DEFAULT_THEME = "sky"
 _THEME_BY_KEY = {t["key"]: t for t in THEMES}
@@ -76,11 +110,12 @@ def current():
 
 
 def theme_colors(key):
-    """테마 key → {"key", "name", "main", "deep", "light"} (색은 QColor)."""
+    """테마 key → 색 묶음 (색은 QColor, "shadow"는 숫자, "dark"는 참/거짓, "key"·"name"은 글자)."""
     t = _THEME_BY_KEY.get(key, _THEME_BY_KEY[DEFAULT_THEME])
-    return {"key": t["key"], "name": t["name"],
-            "main": QtGui.QColor(*t["main"]), "deep": QtGui.QColor(*t["deep"]),
-            "light": QtGui.QColor(*t["light"])}
+    out = {}
+    for k, v in t.items():
+        out[k] = QtGui.QColor(*v) if isinstance(v, tuple) else v
+    return out
 
 
 def css(color, alpha=None):
