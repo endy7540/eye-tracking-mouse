@@ -9,6 +9,7 @@ seal_cursor.py — 테마색 바둑알 커서 (화면 전체를 덮는 투명 �
 
 그리는 것
     - 커서: 테마색 바둑알 (paint_stone). 왼쪽 위에서 빛을 받은 납작한 볼록 돌 + 아래쪽 두께 + 그림자.
+      화이트 테마 = 흰 돌, 다크 테마 = 검은 돌(얇은 밝은 테두리).
       광택은 은은하게(CURSOR_GLOSS). 진하기는 메뉴창 "커서 투명도"로 조절 (set_opacity, 투명도 = 1 - 진하기)
     - 시선 잔상: 붓 자국처럼 커서 쪽은 굵고 꼬리 쪽은 가늘게 사라지는 부드러운 곡선 + 아래 그림자 (메뉴에서 ON/OFF)
       지나온 점들을 부드러운 곡선(캣멀-롬)으로 이은 뒤, 굵기가 변하는 띠 하나로 그립니다.
@@ -53,22 +54,25 @@ def _mix(a, b, t):
                         int(a.blue() + (b.blue() - a.blue()) * t))
 
 
-def paint_stone(p, cx, cy, r, th, opacity=1.0, gloss=CURSOR_GLOSS):
+def paint_stone(p, cx, cy, r, th, opacity=1.0, gloss=CURSOR_GLOSS, rim=False):
     """(cx, cy)에 반지름 r짜리 테마색 바둑알. th = theme.current() 같은 색 묶음, gloss = 광택 세기.
-    아래부터 차례로: 그림자 → 돌의 두께(아래쪽 진한 테두리) → 볼록한 윗면(빛을 받은 쪽이 밝게) → 은은한 광택."""
-    main, deep = th["main"], th["deep"]
+    아래부터 차례로: 그림자 → 돌의 두께(아래쪽 진한 테두리) → 볼록한 윗면(빛을 받은 쪽이 밝게) → 은은한 광택.
+    화이트 테마는 흰 돌, 다크 테마는 검은 돌 (th["stone"], th["stone_side"]).
+    rim = True면 가장자리에 얇은 밝은 테두리 (검은 돌이 어두운 화면에서도 보이게)."""
+    main, deep = th["stone"], th["stone_side"]
     p.save()
     p.setPen(QtCore.Qt.NoPen)
     # 1) 그림자: 오른쪽 아래로 살짝 떨어진 흐린 타원
     sc = QtCore.QPointF(cx + r * 0.10, cy + r * 0.26)
     g = QtGui.QRadialGradient(sc, r * 1.15)
-    g.setColorAt(0.0, QtGui.QColor(20, 25, 35, int(95 * opacity + 25)))
+    g.setColorAt(0.0, QtGui.QColor(20, 25, 35, int((140 if th["key"] == "white" else 95) * opacity + 25)))
     g.setColorAt(0.7, QtGui.QColor(20, 25, 35, int(35 * opacity + 10)))
     g.setColorAt(1.0, QtGui.QColor(20, 25, 35, 0))
     p.setBrush(QtGui.QBrush(g))
     p.drawEllipse(sc, r * 1.15, r * 1.05)
     # 2) 돌의 두께: 윗면보다 조금 아래로 내려간 진한 원 (아래쪽에 테두리처럼 보임)
-    p.setBrush(theme.with_alpha(_mix(deep, QtGui.QColor(0, 0, 0), 0.2), min(1.0, opacity + 0.15)))
+    side = deep if th["key"] in ("white", "black") else _mix(deep, QtGui.QColor(0, 0, 0), 0.2)
+    p.setBrush(theme.with_alpha(side, min(1.0, opacity + 0.15)))
     p.drawEllipse(QtCore.QPointF(cx, cy + r * 0.13), r, r)
     # 3) 윗면: 왼쪽 위가 밝고 가장자리로 갈수록 진해지는 볼록면
     light = _mix(main, QtGui.QColor(255, 255, 255), 0.25 + gloss * 0.5)
@@ -86,6 +90,10 @@ def paint_stone(p, cx, cy, r, th, opacity=1.0, gloss=CURSOR_GLOSS):
     g.setColorAt(1.0, QtGui.QColor(255, 255, 255, 0))
     p.setBrush(QtGui.QBrush(g))
     p.drawEllipse(hc, r * 0.55, r * 0.42)
+    if rim:
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, int(120 * opacity + 20)), 1.5))
+        p.drawEllipse(QtCore.QPointF(cx, cy), r + 0.5, r + 0.5)
     p.restore()
 
 
@@ -276,8 +284,8 @@ class SealCursorOverlay(QtWidgets.QWidget):
         # 띠: 꼬리는 연한 테마색으로 사라지고 머리는 진한 테마색
         g = QtGui.QLinearGradient(tail, head)
         g.setColorAt(0.0, theme.with_alpha(th["light"], 0.0))
-        g.setColorAt(0.5, theme.with_alpha(_mix(th["light"], th["main"], 0.6), 0.45))
-        g.setColorAt(1.0, theme.with_alpha(th["main"], 0.8))
+        g.setColorAt(0.5, theme.with_alpha(_mix(th["light"], th["trail"], 0.6), 0.45))
+        g.setColorAt(1.0, theme.with_alpha(th["trail"], 0.8))
         p.setBrush(QtGui.QBrush(g))
         p.drawPolygon(poly)
 
@@ -301,11 +309,11 @@ class SealCursorOverlay(QtWidgets.QWidget):
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 170), 12))
             p.drawEllipse(QtCore.QPointF(0, 0), r + 8, r + 8)
-            p.setPen(QtGui.QPen(th["deep"], 6))
+            p.setPen(QtGui.QPen(th["ring"], 6))
             p.drawEllipse(QtCore.QPointF(0, 0), r + 8, r + 8)
 
         # 3) 커서 본체: 테마색 바둑알 (진하기 = self.opacity)
-        paint_stone(p, 0, 0, r, th, self.opacity, CURSOR_GLOSS)
+        paint_stone(p, 0, 0, r, th, self.opacity, CURSOR_GLOSS, rim=th["dark"])
 
         # 4) 응시 게이지: 원형 차트처럼 12시 방향부터 시계방향으로 차오름
         if self.gauge > 0:
@@ -314,7 +322,7 @@ class SealCursorOverlay(QtWidgets.QWidget):
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 160), 9))
             p.drawEllipse(rect)
-            pen = QtGui.QPen(th["main"], 7)
+            pen = QtGui.QPen(th["gauge"], 7)
             pen.setCapStyle(QtCore.Qt.RoundCap)
             p.setPen(pen)
             p.drawArc(rect, 90 * 16, int(-360 * 16 * self.gauge))
