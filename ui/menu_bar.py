@@ -21,23 +21,24 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
       응시 게이지는 차지 않음. 윙크 설정이 "끔"이어도 메뉴창 안에서는 윙크가 항상 됨 (main.py가 처리).
       마우스 클릭은 그대로 됨.
     - 오른쪽 위 X 버튼(크롬 창처럼): 메뉴창 닫기
-    - 첫 화면: 세로로 긴 큰 카드 5개 (각 카드 아래쪽에 지금 상태 표시)
+    - 첫 화면: 메뉴창 아래까지 세로로 긴 카드 6개 (각 카드 아래쪽에 지금 상태 표시)
         1. 커서 투명도 (-/+ 누를 때마다 10%씩, 높을수록 투명)
         2. 일시정지    (커서만 숨김, 자물쇠 3초 응시로 다시 활성화)
         3. 키보드      (화상 키보드 열기/닫기)
         4. 시선 잔상   (ON/OFF)
         5. 설정        → 설정 화면으로
+        6. 종료 (빨강) — 실수로 꺼지지 않게 두 번 눌러야 함 (첫 번째 → "한 번 더 윙크하면 종료", 3초 안에 한 번 더)
     - 설정 화면: 뒤로 · 캘리브레이션 다시 하기 · 윙크 클릭(아무 쪽 → 왼눈 → 오른눈 → 끔) · 응시 클릭(ON/OFF)
-    - 아래 줄: 테마 고르기(무광 바둑알 6개) · 상태 확인 · 오른쪽 아래 종료
-      종료는 실수로 꺼지지 않게 두 번 눌러야 함 (첫 번째 → "한 번 더 윙크하면 종료", 3초 안에 한 번 더)
+                · 상태 확인 + 아래 줄에 테마 고르기 (무광 바둑알 8개: 하늘·민트·라벤더·노을·체리·슬레이트·화이트·다크)
+    - 카드마다 아래쪽에 그림자 (화이트 테마는 흰 바탕끼리 구별되게 진하게)
     - 크기: 1920×1080 화면 기준 1620×750. 화면이 작으면 비율대로 줄어들고, 오른쪽 스크롤 토글과 겹치지 않게 맞춤 (_relayout)
 
-테마는 메뉴창·메뉴 아이콘·스크롤 토글·커서·화상 키보드에 적용됩니다 (theme.current()).
+테마는 메뉴창·메뉴 아이콘·스크롤 토글·커서·화상 키보드에 적용됩니다 (theme.current()의 카드·글자·강조색).
 상태 확인 창이 쓰는 paint_panel_background()와 GazeButton 기본 모양은 예전 갈색 그대로 둡니다.
 
 이 파일의 위젯들은 "버튼이 눌렸다"는 신호만 내보내고, 실제로 무엇을 할지는 main.py가 정합니다.
 
-[제출 전] 상태 확인 버튼은 개발할 때만 쓰는 것이라 SHOW_STATUS_BUTTON = False로 바꾸면 메뉴창에서 사라집니다.
+[제출 전] 상태 확인은 개발할 때만 쓰는 것이라 SHOW_STATUS_BUTTON = False로 바꾸면 설정 화면에서 사라집니다.
 """
 import math
 import time
@@ -62,10 +63,9 @@ SCROLL_W, SCROLL_H = 110, 170   # 세로형 스크롤 ON/OFF 토글 크기 (메�
 SCROLL_GAP = 14           # 토글과 메뉴 아이콘 사이 간격
 PANEL_GAP = 16            # 메뉴창 오른쪽 끝과 스크롤 토글 사이 최소 간격
 
-PANEL_BG_ALPHA = 0.30     # 메뉴창·키보드 배경 진하기 (많이 투명하게 — 뒤 화면이 비쳐 보임)
-CARD_BG = QtGui.QColor(255, 255, 255, 205)   # 카드 바탕 (뒤가 비쳐도 글씨가 읽히게 흰색 반투명)
+SHADOW_PAD = 20           # 카드 아래쪽 그림자 자리 (카드 위젯이 이만큼 아래로 더 큼)
 BASE_W, BASE_H = 1620, 750                   # 메뉴창 기준 크기 (1920×1080 화면)
-CARD_H = 400              # 카드 높이 (기준 크기)
+CARD_H = 400              # 설정 화면 카드 높이 (기준 크기). 첫 화면 카드는 메뉴창 아래까지 길게
 HINT_PAD = 26             # 카드 위쪽 "윙크하면 선택" 표시가 들어갈 여유 (카드 위젯이 이만큼 위로 더 큼)
 QUIT_RED = QtGui.QColor(222, 70, 70)
 OFF_GRAY = QtGui.QColor(160, 166, 176)
@@ -101,8 +101,8 @@ def paint_theme_panel(widget, radius=26, width=3):
     th = theme.current()
     p = QtGui.QPainter(widget)
     p.setRenderHint(QtGui.QPainter.Antialiasing)
-    p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.95), width))
-    p.setBrush(theme.with_alpha(th["main"], PANEL_BG_ALPHA))
+    p.setPen(QtGui.QPen(th["edge"], width))
+    p.setBrush(th["panel"])
     p.drawRoundedRect(QtCore.QRectF(widget.rect()).adjusted(1.5, 1.5, -1.5, -1.5), radius, radius)
 
 
@@ -215,16 +215,32 @@ def draw_icon(p, kind, c, size, color):
     p.restore()
 
 
-def paint_card(p, r, th, highlighted, s, radius=32):
-    """카드 바탕: 흰색 반투명 + 테마색 테두리. 시선(또는 마우스)이 올라가면 굵은 진한 테두리 + 둘레 빛."""
+def paint_soft_shadow(p, r, radius, th, s):
+    """카드 아래 부드러운 그림자 (투명한 둥근 사각형을 겹쳐 그림). 세기는 테마의 shadow (화이트가 가장 진함)."""
+    k = th["shadow"]
+    if k <= 0:
+        return
+    p.save()
+    p.setPen(QtCore.Qt.NoPen)
+    for i in range(6):
+        g = (i + 1) * 2 * s
+        p.setBrush(QtGui.QColor(15, 22, 40, int(24 * k * (1 - i / 6))))
+        p.drawRoundedRect(r.adjusted(-g * 0.5, -g * 0.2 + 4 * s, g * 0.5, g + 4 * s), radius + g * 0.5, radius + g * 0.5)
+    p.restore()
+
+
+def paint_card(p, r, th, highlighted, s, radius=32, red=False):
+    """카드 바탕: 테마 카드색 + 테마 테두리 + 그림자. 시선(또는 마우스)이 올라가면 굵은 강조 테두리 + 둘레 빛.
+    red = True면 종료 카드 (빨간 테두리)."""
+    paint_soft_shadow(p, r, radius * s, th, s)
     if highlighted:
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(theme.with_alpha(th["main"], 0.35))
+        p.setBrush(theme.with_alpha(th["accent"], 0.32))
         p.drawRoundedRect(r.adjusted(-5 * s, -5 * s, 5 * s, 5 * s), (radius + 5) * s, (radius + 5) * s)
-        p.setPen(QtGui.QPen(th["deep"], 7 * s))
+        p.setPen(QtGui.QPen(QUIT_RED if red else th["ring"], 7 * s))
     else:
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.45), 2 * s))
-    p.setBrush(CARD_BG)
+        p.setPen(QtGui.QPen(QUIT_RED, 3 * s) if red else QtGui.QPen(th["border"], 2 * s))
+    p.setBrush(th["card"])
     p.drawRoundedRect(r, radius * s, radius * s)
 
 
@@ -234,8 +250,8 @@ def paint_chip(p, cx, cy, text, dot, th, s, px=22):
     w = QtGui.QFontMetricsF(f).horizontalAdvance(text) + 2.4 * px * s
     h = 1.9 * px * s
     rect = QtCore.QRectF(cx - w / 2, cy - h / 2, w, h)
-    p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.5), 2 * s))
-    p.setBrush(QtGui.QColor(255, 255, 255, 235))
+    p.setPen(QtGui.QPen(th["border"], 2 * s))
+    p.setBrush(th["chip"])
     p.drawRoundedRect(rect, h / 2, h / 2)
     p.setPen(QtCore.Qt.NoPen)
     p.setBrush(dot)
@@ -246,16 +262,16 @@ def paint_chip(p, cx, cy, text, dot, th, s, px=22):
 
 
 def paint_toggle(p, cx, cy, on, th, s, k=1.3):
-    """ON/OFF 스위치. 켜짐 = 테마색 + 오른쪽 동그라미, 꺼짐 = 회색 + 왼쪽 동그라미."""
+    """ON/OFF 스위치. 켜짐 = 테마 강조색 + 오른쪽 동그라미, 꺼짐 = 회색 + 왼쪽 동그라미."""
     w, h = 104 * k * s, 50 * k * s
     rect = QtCore.QRectF(cx - w / 2, cy - h / 2, w, h)
     p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(th["main"] if on else OFF_GRAY)
+    p.setBrush(th["accent"] if on else th["off"])
     p.drawRoundedRect(rect, h / 2, h / 2)
     knob_x = rect.right() - h / 2 if on else rect.left() + h / 2
-    p.setBrush(QtGui.QColor(255, 255, 255))
+    p.setBrush(th["main"] if (on and th["dark"]) else QtGui.QColor(255, 255, 255))
     p.drawEllipse(QtCore.QPointF(knob_x, cy), h / 2 - 6 * s, h / 2 - 6 * s)
-    p.setPen(QtGui.QColor(255, 255, 255))
+    p.setPen(th["on"] if on else QtGui.QColor(255, 255, 255))
     p.setFont(theme.ui_font(19 * k * s))
     label = QtCore.QRectF(rect.left() + 8 * s, rect.top(), w - h - 4 * s, h) if on else \
         QtCore.QRectF(rect.left() + h - 2 * s, rect.top(), w - h - 4 * s, h)
@@ -270,50 +286,59 @@ def paint_wink_hint(p, cx, cy, th, s):
     h = 46 * s
     rect = QtCore.QRectF(cx - w / 2, cy - h / 2, w, h)
     p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(theme.with_alpha(th["deep"], 0.94))
+    p.setBrush(theme.with_alpha(th["accent"], 0.96))
     p.drawRoundedRect(rect, h / 2, h / 2)
-    white = QtGui.QColor(255, 255, 255)
+    fg = th["on"]
     ix = rect.left() + 26 * s
-    p.setPen(_pen(white, 2.5 * s))
+    p.setPen(_pen(fg, 2.5 * s))
     p.setBrush(QtCore.Qt.NoBrush)
     p.drawEllipse(QtCore.QPointF(ix, cy), 6 * s, 6 * s)
     path = QtGui.QPainterPath(QtCore.QPointF(ix + 10 * s, cy - 1 * s))
     path.quadTo(QtCore.QPointF(ix + 15 * s, cy + 5 * s), QtCore.QPointF(ix + 20 * s, cy - 1 * s))
     p.drawPath(path)
     p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(white)
+    p.setBrush(fg)
     p.drawEllipse(QtCore.QPointF(ix, cy), 2.4 * s, 2.4 * s)
-    p.setPen(white)
+    p.setPen(fg)
     p.setFont(f)
     p.drawText(rect.adjusted(46 * s, 0, -14 * s, 0), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, text)
 
 
 def _card_body(widget, s):
-    """카드 위젯 안에서 실제 카드가 그려지는 사각형 (위쪽 HINT_PAD는 '윙크하면 선택' 표시 자리)."""
-    return QtCore.QRectF(widget.rect()).adjusted(5 * s, (HINT_PAD + 5) * s, -5 * s, -5 * s)
+    """카드 위젯 안에서 실제 카드가 그려지는 사각형.
+    위쪽 HINT_PAD = '윙크하면 선택' 표시 자리, 양옆·아래 여유 = 그림자 자리."""
+    return QtCore.QRectF(widget.rect()).adjusted(8 * s, (HINT_PAD + 8) * s, -8 * s, -SHADOW_PAD * s)
 
 
-def _paint_card_head(p, r, th, s, kind, title):
-    """카드 위쪽 공통: 연한 동그라미 위 아이콘 + 이름."""
-    ic = QtCore.QPointF(r.center().x(), r.top() + 104 * s)
+def _paint_card_head(p, r, th, s, kind, title, tall, red=False):
+    """카드 위쪽 공통: 연한 동그라미 위 아이콘 + 이름. tall = 첫 화면의 긴 카드."""
+    ic = QtCore.QPointF(r.center().x(), r.top() + (130 if tall else 104) * s)
+    rad = (80 if tall else 74) * s
+    if red:
+        circ = QtGui.QColor(90, 50, 54) if th["dark"] else QtGui.QColor(255, 232, 232)
+    else:
+        circ = th["light"]
     p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(th["light"])
-    p.drawEllipse(ic, 74 * s, 74 * s)
-    draw_icon(p, kind, ic, 90 * s, th["deep"])
-    p.setPen(th["deep"])
+    p.setBrush(circ)
+    p.drawEllipse(ic, rad, rad)
+    draw_icon(p, kind, ic, (96 if tall else 90) * s, QUIT_RED if red else th["deep"])
+    p.setPen(QUIT_RED if red else th["deep"])
     p.setFont(theme.ui_font(34 * s))
-    p.drawText(QtCore.QRectF(r.left(), r.top() + 190 * s, r.width(), 48 * s), QtCore.Qt.AlignCenter, title)
+    ty = r.top() + (238 if tall else 190) * s
+    p.drawText(QtCore.QRectF(r.left(), ty, r.width(), 48 * s), QtCore.Qt.AlignCenter, title)
+    return ty + 48 * s
 
 
 # ── 메뉴창 부품 (전부 윙크로만 눌림) ──────────────────────────────────────
 class ActionCard(GazeButton):
-    """누르면 바로 동작하는 세로 카드. 위에서부터: 아이콘 → 이름 → 설명 → 지금 상태(알약 또는 ON/OFF 스위치)."""
+    """누르면 바로 동작하는 세로 카드. 위에서부터: 아이콘 → 이름 → 설명 → 지금 상태(알약 또는 ON/OFF 스위치).
+    tall = True면 첫 화면의 더 긴 카드 (상태 표시가 카드 아래쪽에 붙음)."""
 
-    def __init__(self, parent, kind, title, sub):
+    def __init__(self, parent, kind, title, sub, tall=False):
         super().__init__("", parent)
         self.wink_only = True
-        self.kind, self.title, self.sub = kind, title, sub
-        self.footer = ("chip", "", OFF_GRAY)      # ("chip", 글자, 점 색) 또는 ("toggle", 켜짐 여부)
+        self.kind, self.title, self.sub, self.tall = kind, title, sub, tall
+        self.footer = ("chip", "", OFF_GRAY)      # ("chip", 글자, 점 색) / ("toggle", 켜짐 여부) / ("none",)
         self.s = 1.0
 
     def set_scale(self, s):
@@ -328,6 +353,13 @@ class ActionCard(GazeButton):
         self.footer = ("toggle", on)
         self.update()
 
+    def _paint_footer(self, p, r, th, s):
+        fy = r.bottom() - (88 if self.tall else 60) * s
+        if self.footer[0] == "toggle":
+            paint_toggle(p, r.center().x(), fy, self.footer[1], th, s)
+        elif self.footer[0] == "chip" and self.footer[1]:
+            paint_chip(p, r.center().x(), fy, self.footer[1], self.footer[2], th, s)
+
     def paintEvent(self, event):
         th, s = theme.current(), self.s
         p = QtGui.QPainter(self)
@@ -335,16 +367,46 @@ class ActionCard(GazeButton):
         r = _card_body(self, s)
         hl = self.is_highlighted()
         paint_card(p, r, th, hl, s)
-        _paint_card_head(p, r, th, s, self.kind, self.title)
+        y = _paint_card_head(p, r, th, s, self.kind, self.title, self.tall)
         p.setPen(theme.with_alpha(th["deep"], 0.8))
-        p.setFont(theme.ui_font(21 * s, bold=False))
-        p.drawText(QtCore.QRectF(r.left() + 8 * s, r.top() + 240 * s, r.width() - 16 * s, 40 * s),
-                   QtCore.Qt.AlignCenter, self.sub)
-        fy = r.top() + 330 * s
-        if self.footer[0] == "toggle":
-            paint_toggle(p, r.center().x(), fy, self.footer[1], th, s)
-        elif self.footer[1]:
-            paint_chip(p, r.center().x(), fy, self.footer[1], self.footer[2], th, s)
+        p.setFont(theme.ui_font(20 * s, bold=False))
+        p.drawText(QtCore.QRectF(r.left() + 6 * s, y + 4 * s, r.width() - 12 * s, 36 * s), QtCore.Qt.AlignCenter, self.sub)
+        self._paint_footer(p, r, th, s)
+        if hl:
+            paint_wink_hint(p, r.center().x(), r.top() - 2 * s, th, s)
+
+
+class QuitCard(ActionCard):
+    """첫 화면 맨 오른쪽 종료 카드 (빨강). 실수로 꺼지지 않게 두 번 눌러야 종료:
+    첫 번째 → 카드가 빨갛게 바뀌며 "한 번 더 윙크하면 종료", QUIT_CONFIRM_SEC 안에 한 번 더 누르면 종료."""
+
+    def __init__(self, parent):
+        super().__init__(parent, "power", "종료", "두 번 윙크하면 꺼져요", tall=True)
+        self.footer = ("none",)
+        self.armed = False
+
+    def paintEvent(self, event):
+        th, s = theme.current(), self.s
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        r = _card_body(self, s)
+        hl = self.is_highlighted()
+        if self.armed:                                        # 한 번 눌린 상태: 빨간 카드
+            paint_soft_shadow(p, r, 32 * s, th, s)
+            p.setPen(QtGui.QPen(QUIT_RED.darker(130), (7 if hl else 3) * s))
+            p.setBrush(QUIT_RED)
+            p.drawRoundedRect(r, 32 * s, 32 * s)
+            p.setPen(QtGui.QColor(255, 255, 255))
+            p.setFont(theme.ui_font(26 * s))
+            p.drawText(r.adjusted(12 * s, 0, -12 * s, 0), QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
+                       "한 번 더\n윙크하면\n종료")
+        else:
+            paint_card(p, r, th, hl, s, red=True)
+            y = _paint_card_head(p, r, th, s, self.kind, self.title, True, red=True)
+            p.setPen(theme.with_alpha(QUIT_RED, 0.9))
+            p.setFont(theme.ui_font(19 * s, bold=False))
+            p.drawText(QtCore.QRectF(r.left() + 6 * s, y + 4 * s, r.width() - 12 * s, 36 * s), QtCore.Qt.AlignCenter,
+                       self.sub)
         if hl:
             paint_wink_hint(p, r.center().x(), r.top() - 2 * s, th, s)
 
@@ -366,7 +428,7 @@ class StepButton(GazeButton):
             p.setOpacity(0.35)        # 더 못 늘리거나 줄일 때는 흐리게
         r = QtCore.QRectF(self.rect()).adjusted(4 * s, 4 * s, -4 * s, -4 * s)
         hl = self.is_highlighted() and self.isEnabled()
-        p.setPen(QtGui.QPen(th["deep"] if hl else th["main"], (6 if hl else 3) * s))
+        p.setPen(QtGui.QPen(th["ring"] if hl else th["accent"], (6 if hl else 3) * s))
         p.setBrush(th["light"])
         p.drawEllipse(r)
         c = r.center()
@@ -405,11 +467,12 @@ class StepperCard(QtWidgets.QWidget):
     def _place_buttons(self):
         s = self.s
         size = int(76 * s)
-        cx, cy = self.width() / 2, (HINT_PAD + 5 + 346) * s
+        r = _card_body(self, s)
+        cx, cy = r.center().x(), r.bottom() - 88 * s
         self.minus.setFixedSize(size, size)
         self.plus.setFixedSize(size, size)
-        self.minus.move(int(cx - 62 * s - size / 2), int(cy - size / 2))
-        self.plus.move(int(cx + 62 * s - size / 2), int(cy - size / 2))
+        self.minus.move(int(cx - 58 * s - size / 2), int(cy - size / 2))
+        self.plus.move(int(cx + 58 * s - size / 2), int(cy - size / 2))
 
     def _highlighted(self):
         return any(b.is_highlighted() and b.isEnabled() for b in (self.minus, self.plus))
@@ -421,13 +484,13 @@ class StepperCard(QtWidgets.QWidget):
         r = _card_body(self, s)
         hl = self._highlighted()
         paint_card(p, r, th, hl, s)
-        _paint_card_head(p, r, th, s, self.kind, self.title)
+        y = _paint_card_head(p, r, th, s, self.kind, self.title, True)
         p.setPen(th["deep"])
-        p.setFont(theme.title_font(42 * s))
-        p.drawText(QtCore.QRectF(r.left(), r.top() + 236 * s, r.width(), 50 * s), QtCore.Qt.AlignCenter, self.value)
+        p.setFont(theme.title_font(46 * s))
+        p.drawText(QtCore.QRectF(r.left(), y + 18 * s, r.width(), 56 * s), QtCore.Qt.AlignCenter, self.value)
         p.setPen(theme.with_alpha(th["deep"], 0.75))
         p.setFont(theme.ui_font(18 * s, bold=False))
-        p.drawText(QtCore.QRectF(r.left(), r.top() + 282 * s, r.width(), 28 * s), QtCore.Qt.AlignCenter, self.hint)
+        p.drawText(QtCore.QRectF(r.left(), y + 72 * s, r.width(), 28 * s), QtCore.Qt.AlignCenter, self.hint)
         if hl:
             paint_wink_hint(p, r.center().x(), r.top() - 2 * s, th, s)
 
@@ -444,34 +507,35 @@ class ThemeSwatch(GazeButton):
 
     def paintEvent(self, event):
         s = self.s
-        th = theme.current()                         # 글자색은 지금 테마를 따름
+        th = theme.current()                         # 고리·글자색은 지금 테마를 따름
         own = theme.theme_colors(self.key)           # 바둑알 색은 이 버튼의 테마
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        c = QtCore.QPointF(self.width() / 2, self.height() * 0.36)
+        c = QtCore.QPointF(self.width() / 2, self.height() * 0.38)
         R = 32 * s
         if self.is_highlighted():
             p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(theme.with_alpha(own["main"], 0.25))
+            p.setBrush(theme.with_alpha(th["accent"], 0.22))
             p.drawEllipse(c, R + 16 * s, R + 16 * s)
         if self.selected:
-            p.setPen(QtGui.QPen(own["main"], 5 * s))
+            p.setPen(QtGui.QPen(th["accent"], 5 * s))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawEllipse(c, R + 10 * s, R + 10 * s)
-        paint_stone(p, c.x(), c.y(), R, own, 0.95, SWATCH_GLOSS)
+        paint_stone(p, c.x(), c.y(), R, own, 0.97, SWATCH_GLOSS, rim=own["dark"])
         if self.selected:
-            p.setPen(_pen(QtGui.QColor(255, 255, 255), 6 * s))
+            ck = QtGui.QColor(40, 44, 54) if own["key"] == "white" else QtGui.QColor(255, 255, 255)
+            p.setPen(_pen(ck, 6 * s))
             p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(c.x() - 13 * s, c.y()),
                                             QtCore.QPointF(c.x() - 3 * s, c.y() + 10 * s),
                                             QtCore.QPointF(c.x() + 15 * s, c.y() - 10 * s)]))
         p.setPen(th["deep"] if self.selected else theme.with_alpha(th["deep"], 0.7))
         p.setFont(theme.ui_font(18 * s, bold=self.selected))
-        p.drawText(QtCore.QRectF(0, self.height() * 0.82 - 16 * s, self.width(), 32 * s),
+        p.drawText(QtCore.QRectF(0, self.height() * 0.84 - 16 * s, self.width(), 32 * s),
                    QtCore.Qt.AlignCenter, own["name"])
 
 
 class PanelCloseButton(GazeButton):
-    """메뉴창 오른쪽 위 X (크롬 창처럼): 평소엔 흰 동그라미 위 X, 시선/마우스가 올라가면 빨간 배경 + 흰 X."""
+    """메뉴창 오른쪽 위 X (크롬 창처럼): 평소엔 카드색 동그라미 위 X, 시선/마우스가 올라가면 빨간 배경 + 흰 X."""
 
     def __init__(self, parent):
         super().__init__("", parent)
@@ -483,54 +547,17 @@ class PanelCloseButton(GazeButton):
         th, s = theme.current(), self.s
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        r = QtCore.QRectF(self.rect()).adjusted(3 * s, 3 * s, -3 * s, -3 * s)
+        r = QtCore.QRectF(self.rect()).adjusted(5 * s, 4 * s, -5 * s, -8 * s)
         hl = self.is_highlighted()
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.6), 2 * s) if not hl else QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(232, 17, 35) if hl else QtGui.QColor(255, 255, 255, 235))
+        if not hl:
+            paint_soft_shadow(p, r, r.width() / 2, th, s * 0.6)
+        p.setPen(QtGui.QPen(th["border"], 2 * s) if not hl else QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(232, 17, 35) if hl else th["chip"])
         p.drawEllipse(r)
         p.setPen(_pen(QtGui.QColor(255, 255, 255) if hl else th["deep"], 5 * s))
         c, d = r.center(), r.width() * 0.19
         p.drawLine(QtCore.QPointF(c.x() - d, c.y() - d), QtCore.QPointF(c.x() + d, c.y() + d))
         p.drawLine(QtCore.QPointF(c.x() - d, c.y() + d), QtCore.QPointF(c.x() + d, c.y() - d))
-
-
-class BottomButton(GazeButton):
-    """아래 줄의 큰 버튼: 종료(빨강, 두 번 눌러야 종료) / 상태 확인."""
-
-    def __init__(self, parent, kind, label):
-        super().__init__("", parent)
-        self.wink_only = True
-        self.kind, self.label = kind, label
-        self.armed = False            # [종료] 한 번 눌러서 "한 번 더 누르면 종료" 상태
-        self.s = 1.0
-
-    def paintEvent(self, event):
-        th, s = theme.current(), self.s
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.Antialiasing)
-        r = QtCore.QRectF(self.rect()).adjusted(5 * s, 5 * s, -5 * s, -5 * s)
-        hl = self.is_highlighted()
-        if self.kind == "power":                                   # 종료
-            color = QtGui.QColor(255, 255, 255) if self.armed else QUIT_RED
-            p.setPen(QtGui.QPen(QUIT_RED, (6 if hl else 3) * s))
-            p.setBrush(QUIT_RED if self.armed else (QtGui.QColor(255, 236, 236, 235) if hl else CARD_BG))
-            p.drawRoundedRect(r, 28 * s, 28 * s)
-        else:                                                      # 상태 확인
-            color = th["deep"]
-            p.setPen(QtGui.QPen(th["deep"] if hl else theme.with_alpha(th["main"], 0.6), (6 if hl else 2) * s))
-            p.setBrush(QtGui.QColor(th["light"]) if self.on else CARD_BG)
-            p.drawRoundedRect(r, 28 * s, 28 * s)
-        if self.kind == "power" and self.armed:
-            p.setPen(color)
-            p.setFont(theme.ui_font(19 * s))
-            p.drawText(r.adjusted(10 * s, 0, -10 * s, 0), QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
-                       "한 번 더\n윙크하면 종료")
-            return
-        draw_icon(p, self.kind, QtCore.QPointF(r.center().x(), r.top() + r.height() * 0.42), 54 * s, color)
-        p.setPen(color)
-        p.setFont(theme.title_font(28 * s) if self.kind == "power" else theme.ui_font(21 * s))
-        p.drawText(QtCore.QRectF(r.left(), r.top() + r.height() * 0.66, r.width(), r.height() * 0.28),
-                   QtCore.Qt.AlignCenter, self.label)
 
 
 class MenuPanel(QtWidgets.QWidget):
@@ -558,47 +585,46 @@ class MenuPanel(QtWidgets.QWidget):
         self.close_btn = PanelCloseButton(self)
         self.close_btn.clicked.connect(lambda: self.close_requested.emit())
 
-        # 첫 화면: 세로 카드 5개
+        # 첫 화면: 세로로 긴 카드 6개 (맨 오른쪽 = 종료)
         self.opacity_card = StepperCard(self, "opacity", "커서 투명도")
-        self.pause_card = ActionCard(self, "pause", "일시정지", "커서 숨기기")
-        self.keyboard_card = ActionCard(self, "keyboard", "키보드", "화상 키보드")
-        self.trail_card = ActionCard(self, "trail", "시선 잔상", "지나간 길 표시")
-        self.settings_card = ActionCard(self, "gear", "설정", "캘리브레이션 · 윙크 · 응시")
+        self.pause_card = ActionCard(self, "pause", "일시정지", "커서 숨기기", tall=True)
+        self.keyboard_card = ActionCard(self, "keyboard", "키보드", "화상 키보드", tall=True)
+        self.trail_card = ActionCard(self, "trail", "시선 잔상", "지나간 길 표시", tall=True)
+        self.settings_card = ActionCard(self, "gear", "설정", "테마 · 보정 · 클릭", tall=True)
+        self.quit_card = QuitCard(self)
         self.main_cards = [self.opacity_card, self.pause_card, self.keyboard_card,
-                           self.trail_card, self.settings_card]
+                           self.trail_card, self.settings_card, self.quit_card]
         self.opacity_card.minus.clicked.connect(lambda: self.transparency_down_requested.emit())
         self.opacity_card.plus.clicked.connect(lambda: self.transparency_up_requested.emit())
         self.pause_card.clicked.connect(lambda: self.pause_requested.emit())
         self.keyboard_card.clicked.connect(lambda: self.keyboard_toggle_requested.emit())
         self.trail_card.clicked.connect(lambda: self.trail_toggle_requested.emit())
         self.settings_card.clicked.connect(lambda: self.show_page("settings"))
+        self.quit_card.clicked.connect(self._on_quit)
+        self.quit_timer = QtCore.QTimer(self)
+        self.quit_timer.setSingleShot(True)
+        self.quit_timer.timeout.connect(self._disarm_quit)
 
-        # 설정 화면: 뒤로 + 카드 3개
+        # 설정 화면: 뒤로 · 캘리브레이션 · 윙크 클릭 · 응시 클릭 · 상태 확인 + 아래 테마 바둑알 8개
         self.back_card = ActionCard(self, "back", "뒤로", "메뉴로 돌아가기")
         self.calib_card = ActionCard(self, "calib", "캘리브레이션", "다시 맞추기")
         self.wink_card = ActionCard(self, "wink", "윙크 클릭", "누르면 바뀌어요")
         self.dwell_card = ActionCard(self, "dwell", "응시 클릭", "메뉴 밖에서 보면 클릭")
+        self.status_card = ActionCard(self, "status", "상태 확인", "카메라 · 눈 · 정확도")
         self.settings_cards = [self.back_card, self.calib_card, self.wink_card, self.dwell_card]
+        if SHOW_STATUS_BUTTON:
+            self.settings_cards.append(self.status_card)
         self.calib_card.set_chip("두더지 잡기", theme.YELLOW)
         self.back_card.clicked.connect(lambda: self.show_page("main"))
         self.calib_card.clicked.connect(lambda: self.recalibrate_requested.emit())
         self.wink_card.clicked.connect(lambda: self.wink_toggle_requested.emit())
         self.dwell_card.clicked.connect(lambda: self.dwell_toggle_requested.emit())
-
-        # 아래 줄: 테마 바둑알 6개 · 상태 확인 · 종료
+        self.status_card.clicked.connect(lambda: self.status_requested.emit())
         self.swatches = []
         for t in theme.THEMES:
             sw = ThemeSwatch(self, t["key"])
             sw.clicked.connect(lambda _=False, k=t["key"]: self.theme_selected.emit(k))
             self.swatches.append(sw)
-        self.status_btn = BottomButton(self, "status", "상태 확인")
-        self.status_btn.clicked.connect(lambda: self.status_requested.emit())
-        self.status_btn.setVisible(SHOW_STATUS_BUTTON)
-        self.quit_btn = BottomButton(self, "power", "종료")
-        self.quit_btn.clicked.connect(self._on_quit)
-        self.quit_timer = QtCore.QTimer(self)
-        self.quit_timer.setSingleShot(True)
-        self.quit_timer.timeout.connect(self._disarm_quit)
 
         self._relayout()
         self.show_page("main")
@@ -609,8 +635,9 @@ class MenuPanel(QtWidgets.QWidget):
         self.page = page
         for c in self.main_cards:
             c.setVisible(page == "main")
-        for c in self.settings_cards:
+        for c in self.settings_cards + self.swatches:
             c.setVisible(page == "settings")
+        self.status_card.setVisible(page == "settings" and SHOW_STATUS_BUTTON)
         self.update()
 
     def showEvent(self, event):
@@ -620,16 +647,16 @@ class MenuPanel(QtWidgets.QWidget):
 
     # ── 종료 (두 번 눌러야 종료) ──────────────────────────────────
     def _on_quit(self):
-        if self.quit_btn.armed:
+        if self.quit_card.armed:
             self.quit_requested.emit()
         else:
-            self.quit_btn.armed = True          # 첫 번째: "한 번 더 윙크하면 종료"
-            self.quit_btn.update()
+            self.quit_card.armed = True         # 첫 번째: "한 번 더 윙크하면 종료"
+            self.quit_card.update()
             self.quit_timer.start(int(QUIT_CONFIRM_SEC * 1000))
 
     def _disarm_quit(self):
-        self.quit_btn.armed = False
-        self.quit_btn.update()
+        self.quit_card.armed = False
+        self.quit_card.update()
 
     # ── 배치 ─────────────────────────────────────────────────────
     def _relayout(self):
@@ -649,36 +676,37 @@ class MenuPanel(QtWidgets.QWidget):
         cb = int(64 * s)
         self.header_rect = QtCore.QRectF(pad, pad, W - 2 * pad - cb - 16 * s, 76 * s)
         self.close_btn.s = s
-        self.close_btn.setFixedSize(cb, cb)
-        self.close_btn.move(int(W - pad - cb), int(pad + 6 * s))
+        self.close_btn.setFixedSize(cb, int(cb + 4 * s))
+        self.close_btn.move(int(W - pad - cb), int(pad + 4 * s))
 
-        # 카드 줄 (카드 위젯은 '윙크하면 선택' 표시 자리만큼 위로 더 큼)
-        top = pad + 76 * s + 22 * s - HINT_PAD * s
-        ch = (CARD_H + HINT_PAD) * s
-        cw = (W - 2 * pad - 4 * gap) / 5
+        # 카드 위젯은 위로 '윙크하면 선택' 자리(HINT_PAD), 양옆·아래로 그림자 자리만큼 더 큼
+        top = pad + 76 * s + 22 * s - (HINT_PAD + 8) * s
+        ext_x, ext_b = 8 * s, SHADOW_PAD * s
+
+        # 첫 화면: 긴 카드 6개 (머리줄 아래부터 메뉴창 아래 여백까지)
+        tall_h = H - pad - (pad + 76 * s + 22 * s)
+        cw = (W - 2 * pad - 5 * gap) / 6
         for i, card in enumerate(self.main_cards):
-            card.setGeometry(int(pad + i * (cw + gap)), int(top), int(cw), int(ch))
+            card.setGeometry(int(pad + i * (cw + gap) - ext_x), int(top), int(cw + 2 * ext_x),
+                             int(tall_h + (HINT_PAD + 8) * s + ext_b))
             card.set_scale(s)
-        total = 4 * cw + 3 * gap
+
+        # 설정 화면: 카드 4~5개 + 아래 테마 줄
+        n = len(self.settings_cards)
+        cw2 = (W - 2 * pad - 4 * gap) / 5
+        total = n * cw2 + (n - 1) * gap
         x0 = pad + (W - 2 * pad - total) / 2
         for i, card in enumerate(self.settings_cards):
-            card.setGeometry(int(x0 + i * (cw + gap)), int(top), int(cw), int(ch))
+            card.setGeometry(int(x0 + i * (cw2 + gap) - ext_x), int(top), int(cw2 + 2 * ext_x),
+                             int(CARD_H * s + (HINT_PAD + 8) * s + ext_b))
             card.set_scale(s)
-
-        # 아래 줄 (오른쪽부터: 종료 → 상태 확인 → 남은 자리에 테마)
-        by, bh, bw = pad + 76 * s + 22 * s + CARD_H * s + 22 * s, 150 * s, 190 * s
-        right = W - pad
-        for btn, show in ((self.quit_btn, True), (self.status_btn, SHOW_STATUS_BUTTON)):
-            if show:
-                btn.s = s
-                btn.setGeometry(int(right - bw), int(by), int(bw), int(bh))
-                right -= bw + 18 * s
-        self.theme_rect = QtCore.QRectF(pad, by, right - pad, bh)
-        sw_x = pad + 250 * s
-        sw_w = (self.theme_rect.right() - 16 * s - sw_x) / len(self.swatches)
+        ty = pad + 76 * s + 22 * s + CARD_H * s + 24 * s
+        self.theme_rect = QtCore.QRectF(pad, ty, W - 2 * pad, H - pad - ty)
+        sw_x = pad + 270 * s
+        sw_w = (self.theme_rect.right() - 20 * s - sw_x) / len(self.swatches)
         for i, sw in enumerate(self.swatches):
             sw.s = s
-            sw.setGeometry(int(sw_x + i * sw_w), int(by + 6 * s), int(sw_w), int(bh - 12 * s))
+            sw.setGeometry(int(sw_x + i * sw_w), int(ty + 4 * s), int(sw_w), int(self.theme_rect.height() - 8 * s))
         self.update()
 
     def place(self):
@@ -689,8 +717,7 @@ class MenuPanel(QtWidgets.QWidget):
     def refresh_theme(self):
         """테마가 바뀌면 메뉴창 전체를 다시 그림."""
         self.update()
-        for w in self.main_cards + self.settings_cards + self.swatches + [self.close_btn, self.status_btn,
-                                                                           self.quit_btn]:
+        for w in self.main_cards + self.settings_cards + self.swatches + [self.close_btn, self.status_card]:
             w.update()
         self.opacity_card.minus.update()
         self.opacity_card.plus.update()
@@ -699,6 +726,7 @@ class MenuPanel(QtWidgets.QWidget):
     def update_state(self, st):
         """main.py가 모드가 바뀔 때마다 호출.
         st = {"paused", "trail", "keyboard", "wink", "dwell", "status", "opacity", "theme"}"""
+        th = theme.current()
         op = st.get("opacity", 0.6)
         self.opacity_card.set_value(f"{round((1 - op) * 100)}%", "높을수록 투명")
         self.opacity_card.plus.setEnabled(op > MIN_OPACITY + 1e-6)     # 투명도 + = 진하기 -
@@ -709,14 +737,15 @@ class MenuPanel(QtWidgets.QWidget):
         else:
             self.pause_card.set_chip("실행 중", theme.GREEN)
         self.keyboard_card.set_chip("열림" if st["keyboard"] else "닫힘",
-                                    theme.GREEN if st["keyboard"] else OFF_GRAY)
+                                    theme.GREEN if st["keyboard"] else th["off"])
         self.trail_card.set_toggle(st["trail"])
-        self.settings_card.set_chip("들어가기 ›", theme.current()["main"])
-        self.back_card.set_chip("메뉴", theme.current()["main"])
+        self.settings_card.set_chip("들어가기 ›", th["accent"])
+        self.back_card.set_chip("메뉴", th["accent"])
         self.wink_card.set_chip(WINK_NAMES.get(st["wink"], "아무 쪽 눈"),
-                                theme.GREEN if st["wink"] != "off" else OFF_GRAY)
+                                theme.GREEN if st["wink"] != "off" else th["off"])
         self.dwell_card.set_toggle(st["dwell"])
-        self.status_btn.set_on(st.get("status", False))
+        status_on = st.get("status", False)
+        self.status_card.set_chip("열림" if status_on else "닫힘", theme.GREEN if status_on else th["off"])
 
         key = st.get("theme", theme.current_key())
         for sw in self.swatches:
@@ -731,15 +760,16 @@ class MenuPanel(QtWidgets.QWidget):
         th, s = theme.current(), self.s
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        # 배경: 테마색, 많이 투명하게
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.95), 4 * s))
-        p.setBrush(theme.with_alpha(th["main"], PANEL_BG_ALPHA))
+        # 배경: 테마 메뉴창 색 (색깔 테마는 많이 투명하게, 화이트·다크는 조금 더 진하게)
+        p.setPen(QtGui.QPen(th["edge"], (3 if th["key"] == "white" else 4) * s))
+        p.setBrush(th["panel"])
         p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(2 * s, 2 * s, -2 * s, -2 * s), 44 * s, 44 * s)
 
-        # 머리줄 (뒤 화면 글씨와 겹쳐도 읽히도록 흰색 반투명 바탕)
+        # 머리줄 (뒤 화면 글씨와 겹쳐도 읽히도록 카드색 바탕)
         hr = self.header_rect
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.4), 2 * s))
-        p.setBrush(QtGui.QColor(255, 255, 255, 190))
+        paint_soft_shadow(p, hr, hr.height() / 2, th, s * 0.7)
+        p.setPen(QtGui.QPen(th["border"], 2 * s))
+        p.setBrush(th["card"])
         p.drawRoundedRect(hr, hr.height() / 2, hr.height() / 2)
         title = "메뉴 › 설정" if self.page == "settings" else "메뉴"
         hint = "보고 윙크하면 선택돼요  (메뉴 안에서는 응시 클릭 꺼짐)"
@@ -754,19 +784,18 @@ class MenuPanel(QtWidgets.QWidget):
         p.drawText(QtCore.QRectF(hr.left() + 60 * s + tw, hr.top(), hr.width() - 80 * s - tw, hr.height()),
                    QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, hint)
 
-        # 테마 칸 바탕 + 제목 (바둑알들은 ThemeSwatch가 따로 그림)
-        tr = self.theme_rect
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.45), 2 * s))
-        p.setBrush(CARD_BG)
-        p.drawRoundedRect(tr, 28 * s, 28 * s)
-        p.setPen(th["deep"])
-        p.setFont(theme.title_font(34 * s))
-        p.drawText(QtCore.QRectF(tr.left() + 32 * s, tr.top() + 20 * s, 200 * s, 50 * s),
-                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, "테마")
-        p.setPen(theme.with_alpha(th["deep"], 0.8))
-        p.setFont(theme.ui_font(16 * s, bold=False))
-        p.drawText(QtCore.QRectF(tr.left() + 32 * s, tr.top() + 74 * s, 210 * s, 60 * s),
-                   QtCore.Qt.AlignTop | QtCore.Qt.AlignLeft, "메뉴·아이콘·커서\n키보드 색이 함께 바뀌어요")
+        # 설정 화면: 테마 칸 바탕 + 제목 (바둑알들은 ThemeSwatch가 따로 그림)
+        if self.page == "settings":
+            tr = self.theme_rect
+            paint_card(p, tr, th, False, s, radius=28)
+            p.setPen(th["deep"])
+            p.setFont(theme.title_font(36 * s))
+            p.drawText(QtCore.QRectF(tr.left() + 34 * s, tr.top() + 22 * s, 220 * s, 52 * s),
+                       QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, "테마")
+            p.setPen(theme.with_alpha(th["deep"], 0.8))
+            p.setFont(theme.ui_font(16 * s, bold=False))
+            p.drawText(QtCore.QRectF(tr.left() + 34 * s, tr.top() + 78 * s, 230 * s, 60 * s),
+                       QtCore.Qt.AlignTop | QtCore.Qt.AlignLeft, "메뉴·아이콘·커서·키보드\n색이 함께 바뀌어요")
 
 
 # ── 메뉴 아이콘·스크롤 토글 (화면 오른쪽 끝 세로줄) ───────────────────────────
@@ -788,10 +817,11 @@ class ScrollToggle(GazeButton):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         r = QtCore.QRectF(self.rect()).adjusted(3 * s, 3 * s, -3 * s, -3 * s)
         hl = self.is_highlighted()
-        p.setPen(QtGui.QPen(th["deep"] if hl else theme.with_alpha(th["main"], 0.8), (5 if hl else 2.5) * s))
-        p.setBrush(theme.with_alpha(th["main"], 0.92) if on else QtGui.QColor(255, 255, 255, 232))
+        paint_soft_shadow(p, r, 30 * s, th, s * 0.6)
+        p.setPen(QtGui.QPen(th["ring"] if hl else th["border"], (5 if hl else 2.5) * s))
+        p.setBrush(theme.with_alpha(th["accent"], 0.94) if on else th["chip"])
         p.drawRoundedRect(r, 30 * s, 30 * s)
-        ink = QtGui.QColor(255, 255, 255) if on else th["deep"]
+        ink = th["on"] if on else th["deep"]
         cx, top = r.center().x(), r.top()
 
         # 위아래 화살표 (↕)
@@ -808,7 +838,7 @@ class ScrollToggle(GazeButton):
         # 스위치 (안에 ON/OFF 글자)
         sw = QtCore.QRectF(cx - 37 * s, top + 116 * s, 74 * s, 36 * s)
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(th["deep"] if on else OFF_GRAY)
+        p.setBrush((th["main"] if th["dark"] else th["deep"]) if on else th["off"])   # 켜짐: 바탕과 대비되는 색
         p.drawRoundedRect(sw, 18 * s, 18 * s)
         p.setBrush(QtGui.QColor(255, 255, 255))
         p.drawEllipse(QtCore.QPointF(sw.right() - 18 * s if on else sw.left() + 18 * s, sw.center().y()), 14 * s, 14 * s)
@@ -819,7 +849,7 @@ class ScrollToggle(GazeButton):
         p.drawText(label, QtCore.Qt.AlignCenter, "ON" if on else "OFF")
         # 바라보는 동안 아래쪽에 진행 선
         if self.progress > 0:
-            p.setPen(_pen(QtGui.QColor(255, 255, 255) if on else th["deep"], 4 * s))
+            p.setPen(_pen(th["on"] if on else th["deep"], 4 * s))
             x0 = r.left() + 18 * s
             p.drawLine(QtCore.QPointF(x0, r.bottom() - 8 * s),
                        QtCore.QPointF(x0 + (r.width() - 36 * s) * self.progress, r.bottom() - 8 * s))
@@ -853,17 +883,17 @@ class MenuIconButton(GazeButton):
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(QtGui.QColor(0, 0, 0, int(45 * a)))               # 살짝 그림자
         p.drawEllipse(r.translated(0, 3 * s))
-        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, int(240 * a)), 4 * s))
-        p.setBrush(theme.with_alpha(th["main"], 0.85 * a))
+        edge = theme.with_alpha(th["edge"], a) if th["key"] == "white" else QtGui.QColor(255, 255, 255, int(240 * a))
+        p.setPen(QtGui.QPen(edge, 4 * s))
+        p.setBrush(theme.with_alpha(th["main"], (0.95 if th["key"] in ("white", "black") else 0.85) * a))
         p.drawEllipse(r)
-        if self.is_highlighted():                                      # 하이라이트: 진한 테마색 굵은 테두리
-            p.setPen(QtGui.QPen(theme.with_alpha(th["deep"], a), 6 * s))
+        if self.is_highlighted():                                      # 하이라이트: 테마 강조색 굵은 테두리
+            p.setPen(QtGui.QPen(theme.with_alpha(th["ring"], a), 6 * s))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawEllipse(r.adjusted(-2 * s, -2 * s, 2 * s, 2 * s))
-        draw_icon(p, "lock" if self.locked else "menu", r.center(), 52 * s,
-                  QtGui.QColor(255, 255, 255, int(255 * a)))
+        draw_icon(p, "lock" if self.locked else "menu", r.center(), 52 * s, theme.with_alpha(th["main_ink"], a))
         if self.progress > 0:                    # 바라보는 동안 둘레 게이지 (자물쇠일 땐 커서가 숨겨져 있어서 여기서 보여줌)
-            p.setPen(_pen(theme.with_alpha(th["deep"], a), 6 * s))
+            p.setPen(_pen(theme.with_alpha(th["ring"], a), 6 * s))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawArc(r.adjusted(-3 * s, -3 * s, 3 * s, 3 * s), 90 * 16, int(-360 * 16 * self.progress))
 
@@ -989,8 +1019,8 @@ class MenuDock(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         rect = QtCore.QRectF(1, self.icon.y() + ICON_PX - 7 - ph, pw - 2, ph)   # 메뉴 아이콘(자물쇠) 왼쪽, 원의 아래쪽 끝에 맞춤
-        p.setPen(QtGui.QPen(theme.with_alpha(th["main"], 0.7 * a), 2))
-        p.setBrush(QtGui.QColor(255, 255, 255, int(220 * a)))
+        p.setPen(QtGui.QPen(theme.with_alpha(th["border"], a), 2))
+        p.setBrush(theme.with_alpha(th["chip"], 0.92 * a))
         p.drawRoundedRect(rect, ph / 2, ph / 2)
         p.setPen(theme.with_alpha(th["deep"], a))
         p.setFont(theme.ui_font(17))
