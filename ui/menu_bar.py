@@ -29,6 +29,7 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
         5. 설정        → 설정 화면으로
         6. 종료 (빨강) — 실수로 꺼지지 않게 두 번 눌러야 함 (첫 번째 → "한 번 더 윙크하면 종료", 3초 안에 한 번 더)
     - 설정 화면: 뒤로 · 캘리브레이션 다시 하기 · 윙크 클릭(아무 쪽 → 왼눈 → 오른눈 → 끔) · 응시 클릭(ON/OFF)
+                · 게임 1 · 게임 2 (설정 화면에서 별도 미니게임 파일 실행 — 아래 GAME1_FILE / GAME2_FILE 참고)
                 · 상태 확인 + 아래 줄에 테마 고르기 (무광 바둑알 8개: 하늘·민트·라벤더·노을·체리·슬레이트·화이트·다크)
     - 카드마다 아래쪽에 그림자 (화이트 테마는 흰 바탕끼리 구별되게 진하게)
     - 크기: 1920×1080 화면 기준 1620×750. 화면이 작으면 비율대로 줄어들고, 오른쪽 스크롤 토글과 겹치지 않게 맞춤 (_relayout)
@@ -41,7 +42,11 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
 [제출 전] 상태 확인은 개발할 때만 쓰는 것이라 SHOW_STATUS_BUTTON = False로 바꾸면 설정 화면에서 사라집니다.
 """
 import math
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
@@ -50,6 +55,64 @@ from .gaze_widgets import GazeButton, setup_floating_window, DWELL_CLICK_SEC
 from .seal_cursor import MIN_OPACITY, MAX_OPACITY, SWATCH_GLOSS, paint_stone
 
 SHOW_STATUS_BUTTON = True # [개발할 때만] 상태 확인 버튼 보이기 — 제출할 때 False로
+
+# ── 미니게임 버튼 (설정 화면) ───────────────────────────────────────────
+# ★ "게임파일" 자리에 실제 파일 이름만 쓰세요 (확장자 .py / .exe 는 빼고).
+#    예) game.py 가 있으면  GAME1_FILE = "game"
+#    개발 중에는 .py, 설치(배포) 후에는 .exe 를 자동으로 찾아서 실행합니다.
+#    게임 파일은 main.py와 같은 폴더에 두세요. 다른 폴더에 두고 싶으면 GAME_DIR = Path("...")로 바꾸면 됩니다.
+GAME1_FILE = "minigames"       # 첫 번째 게임 파일 이름
+GAME2_FILE = "mole_game"       # 두 번째 게임 파일 이름
+GAME1_TITLE = "미니게임"        # 카드에 보이는 이름 (원하는 대로 바꿔도 됨)
+GAME2_TITLE = "두더지잡기"
+
+
+def _app_dir():
+    """게임 파일을 찾을 폴더 = 메인 프로그램이 있는 폴더.
+    (설치 후 .exe 로 실행 중이면 그 .exe 가 있는 폴더, 개발 중이면 ui 폴더의 바로 위 폴더)"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+
+GAME_DIR = _app_dir()
+# 다운로드 폴더 같은 다른 곳에 두고 싶으면 위 줄 대신 아래처럼 쓰세요:
+# GAME_DIR = Path.home() / "Downloads"
+
+
+def _find_game(name):
+    """GAME_DIR 에서 name(.py 또는 .exe)을 찾아 경로를 돌려줌. 없으면 None."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    if Path(name).suffix.lower() in (".py", ".exe"):          # 확장자까지 적었어도 동작
+        candidates = [name]
+    elif getattr(sys, "frozen", False):                       # 설치본: .exe 만 (파이썬이 없으므로)
+        candidates = [name + ".exe"]
+    else:                                                     # 개발 중: .py 먼저, 없으면 .exe
+        candidates = [name + ".py", name + ".exe"]
+    for c in candidates:
+        p = GAME_DIR / c
+        if p.is_file():
+            return p
+    return None
+
+
+def launch_game(name):
+    """게임 파일을 메인 프로그램과 따로 실행. 실행했으면 True, 파일이 없거나 실패하면 False."""
+    path = _find_game(name)
+    if path is None:
+        return False
+    try:
+        if path.suffix.lower() == ".py":
+            cmd = [sys.executable, str(path)]
+        else:
+            cmd = [str(path)]
+        subprocess.Popen(cmd, cwd=str(path.parent))
+        return True
+    except Exception as e:
+        print("[게임 실행 실패]", path, e)
+        return False
 
 EDGE_MARGIN = 24          # 화면 가장자리와의 간격
 UNLOCK_DWELL_SEC = 3.0    # 자물쇠를 이만큼 바라보면 일시정지 해제 (요구사항: 3초)
@@ -200,6 +263,15 @@ def draw_icon(p, kind, c, size, color):
         p.setPen(_pen(color, 6 * u))
         p.drawArc(QtCore.QRectF(x - 20 * u, y - 20 * u, 40 * u, 40 * u), 120 * 16, 300 * 16)
         p.drawLine(P(0, -24), P(0, -4))
+    elif kind == "game":                                 # 게임 패드
+        p.setPen(_pen(color, 6 * u))
+        p.drawRoundedRect(QtCore.QRectF(x - 34 * u, y - 19 * u, 68 * u, 38 * u), 16 * u, 16 * u)
+        p.drawLine(P(-24, 0), P(-10, 0))                 # 십자키
+        p.drawLine(P(-17, -7), P(-17, 7))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(P(10, -5), 4.5 * u, 4.5 * u)       # 버튼 두 개
+        p.drawEllipse(P(22, 5), 4.5 * u, 4.5 * u)
     elif kind == "menu":                                 # ≡
         p.setPen(_pen(color, 8 * u))
         for dy in (-14, 0, 14):
@@ -310,6 +382,16 @@ def _card_body(widget, s):
     return QtCore.QRectF(widget.rect()).adjusted(8 * s, (HINT_PAD + 8) * s, -8 * s, -SHADOW_PAD * s)
 
 
+def _fit_font(px, text, max_w, bold=True):
+    """글자가 max_w 보다 넓으면 들어갈 때까지 글자 크기를 줄임 (카드가 좁아져도 안 잘리게)."""
+    while px > 10:
+        f = theme.ui_font(px, bold)
+        if QtGui.QFontMetricsF(f).horizontalAdvance(text) <= max_w:
+            return f
+        px -= 1
+    return theme.ui_font(px, bold)
+
+
 def _paint_card_head(p, r, th, s, kind, title, tall, red=False):
     """카드 위쪽 공통: 연한 동그라미 위 아이콘 + 이름. tall = 첫 화면의 긴 카드."""
     ic = QtCore.QPointF(r.center().x(), r.top() + (130 if tall else 104) * s)
@@ -323,7 +405,7 @@ def _paint_card_head(p, r, th, s, kind, title, tall, red=False):
     p.drawEllipse(ic, rad, rad)
     draw_icon(p, kind, ic, (96 if tall else 90) * s, QUIT_RED if red else th["deep"])
     p.setPen(QUIT_RED if red else th["deep"])
-    p.setFont(theme.ui_font(34 * s))
+    p.setFont(_fit_font(34 * s, title, r.width() - 12 * s))
     ty = r.top() + (238 if tall else 190) * s
     p.drawText(QtCore.QRectF(r.left(), ty, r.width(), 48 * s), QtCore.Qt.AlignCenter, title)
     return ty + 48 * s
@@ -369,7 +451,7 @@ class ActionCard(GazeButton):
         paint_card(p, r, th, hl, s)
         y = _paint_card_head(p, r, th, s, self.kind, self.title, self.tall)
         p.setPen(theme.with_alpha(th["deep"], 0.8))
-        p.setFont(theme.ui_font(20 * s, bold=False))
+        p.setFont(_fit_font(20 * s, self.sub, r.width() - 12 * s, bold=False))
         p.drawText(QtCore.QRectF(r.left() + 6 * s, y + 4 * s, r.width() - 12 * s, 36 * s), QtCore.Qt.AlignCenter, self.sub)
         self._paint_footer(p, r, th, s)
         if hl:
@@ -611,7 +693,10 @@ class MenuPanel(QtWidgets.QWidget):
         self.wink_card = ActionCard(self, "wink", "윙크 클릭", "누르면 바뀌어요")
         self.dwell_card = ActionCard(self, "dwell", "응시 클릭", "메뉴 밖에서 보면 클릭")
         self.status_card = ActionCard(self, "status", "상태 확인", "카메라 · 눈 · 정확도")
-        self.settings_cards = [self.back_card, self.calib_card, self.wink_card, self.dwell_card]
+        self.game1_card = ActionCard(self, "game", GAME1_TITLE, "미니게임 실행")
+        self.game2_card = ActionCard(self, "game", GAME2_TITLE, "미니게임 실행")
+        self.settings_cards = [self.back_card, self.calib_card, self.wink_card, self.dwell_card,
+                               self.game1_card, self.game2_card]
         if SHOW_STATUS_BUTTON:
             self.settings_cards.append(self.status_card)
         self.calib_card.set_chip("두더지 잡기", theme.YELLOW)
@@ -620,6 +705,12 @@ class MenuPanel(QtWidgets.QWidget):
         self.wink_card.clicked.connect(lambda: self.wink_toggle_requested.emit())
         self.dwell_card.clicked.connect(lambda: self.dwell_toggle_requested.emit())
         self.status_card.clicked.connect(lambda: self.status_requested.emit())
+        self.game1_card.clicked.connect(lambda: self._on_game(self.game1_card, GAME1_FILE))
+        self.game2_card.clicked.connect(lambda: self._on_game(self.game2_card, GAME2_FILE))
+        self._game_timer = QtCore.QTimer(self)               # "파일 없음" 표시를 잠시 뒤 원래대로
+        self._game_timer.setSingleShot(True)
+        self._game_timer.timeout.connect(self._reset_game_chips)
+        self._reset_game_chips()
         self.swatches = []
         for t in theme.THEMES:
             sw = ThemeSwatch(self, t["key"])
@@ -644,6 +735,19 @@ class MenuPanel(QtWidgets.QWidget):
         super().showEvent(event)
         self.show_page("main")                  # 메뉴창을 열 때는 항상 첫 화면부터
         self._disarm_quit()
+
+    # ── 미니게임 실행 ─────────────────────────────────────────────
+    def _on_game(self, card, name):
+        if launch_game(name):
+            self.close_requested.emit()          # 게임이 뜨면 메뉴창은 닫음
+        else:
+            card.set_chip("파일 없음", theme.RED)   # 파일을 못 찾으면 카드에 잠깐 표시
+            self._game_timer.start(2500)
+
+    def _reset_game_chips(self):
+        accent = theme.current()["accent"]
+        for c in (self.game1_card, self.game2_card):
+            c.set_chip("열기 ›", accent)
 
     # ── 종료 (두 번 눌러야 종료) ──────────────────────────────────
     def _on_quit(self):
@@ -693,7 +797,8 @@ class MenuPanel(QtWidgets.QWidget):
 
         # 설정 화면: 카드 4~5개 + 아래 테마 줄
         n = len(self.settings_cards)
-        cw2 = (W - 2 * pad - 4 * gap) / 5
+        slots = max(n, 5)                                  # 5개까지는 예전과 같은 폭, 넘으면 줄여서 한 줄에
+        cw2 = (W - 2 * pad - (slots - 1) * gap) / slots
         total = n * cw2 + (n - 1) * gap
         x0 = pad + (W - 2 * pad - total) / 2
         for i, card in enumerate(self.settings_cards):
@@ -744,6 +849,7 @@ class MenuPanel(QtWidgets.QWidget):
         self.wink_card.set_chip(WINK_NAMES.get(st["wink"], "아무 쪽 눈"),
                                 theme.GREEN if st["wink"] != "off" else th["off"])
         self.dwell_card.set_toggle(st["dwell"])
+        self._reset_game_chips()
         status_on = st.get("status", False)
         self.status_card.set_chip("열림" if status_on else "닫힘", theme.GREEN if status_on else th["off"])
 
