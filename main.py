@@ -151,6 +151,7 @@ class DemoApp(QtCore.QObject):
         self.panel.keyboard_toggle_requested.connect(self.toggle_keyboard)
         self.panel.trail_toggle_requested.connect(self.toggle_trail)
         self.panel.recalibrate_requested.connect(self.recalibrate)
+        self.panel.number_check_requested.connect(self.run_number_check)
         self.panel.wink_toggle_requested.connect(self.toggle_wink)
         self.panel.dwell_toggle_requested.connect(self.toggle_dwell)
         self.panel.status_requested.connect(self.toggle_status)
@@ -647,6 +648,12 @@ class DemoApp(QtCore.QObject):
         self._save_settings()
         self._apply_state()
 
+    def run_number_check(self):
+        """메뉴의 '정확도 높이기': 숫자 맞추기를 한 번 더 함 (통과한 숫자는 자동 보정에 쌓여 할수록 좋아짐)."""
+        self.panel_open = False
+        self.panel.hide()
+        QtCore.QTimer.singleShot(150, self.start_number_check)   # 버튼 처리가 끝난 뒤 시작
+
     def recalibrate(self):
         self.panel_open = False
         self.panel.hide()
@@ -658,7 +665,7 @@ class DemoApp(QtCore.QObject):
         st = {"paused": self.paused, "trail": self.trail_on,
               "keyboard": self.keyboard_open, "wink": self.wink_mode, "dwell": self.dwell_on,
               "status": self.status_win.isVisible(), "opacity": self.cursor_opacity,
-              "theme": theme.current_key()}
+              "theme": theme.current_key(), "check_err": self.check_err}
         self.panel.update_state(st)
         self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
         self.scroller.set_enabled(self.scroll_on and not self.paused)   # 스크롤 로직도 같은 값을 따라감 (일시정지 중엔 스크롤 띠도 숨김)

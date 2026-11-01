@@ -191,6 +191,10 @@ def draw_icon(p, kind, c, size, color):
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(color)
         p.drawEllipse(P(0, 0), 8 * u, 8 * u)
+    elif kind == "digits":                               # 숫자 123 (숫자 맞추기 = 정확도 높이기)
+        p.setPen(color)
+        p.setFont(theme.ui_font(36 * u, bold=True))
+        p.drawText(QtCore.QRectF(x - 40 * u, y - 26 * u, 80 * u, 52 * u), QtCore.Qt.AlignCenter, "123")
     elif kind == "status":                               # 막대 그래프 (상태 확인)
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(color)
@@ -568,6 +572,7 @@ class MenuPanel(QtWidgets.QWidget):
     keyboard_toggle_requested = QtCore.pyqtSignal()
     trail_toggle_requested = QtCore.pyqtSignal()
     recalibrate_requested = QtCore.pyqtSignal()
+    number_check_requested = QtCore.pyqtSignal()        # 숫자 맞추기 (정확도 높이기)
     wink_toggle_requested = QtCore.pyqtSignal()
     dwell_toggle_requested = QtCore.pyqtSignal()
     status_requested = QtCore.pyqtSignal()
@@ -608,15 +613,18 @@ class MenuPanel(QtWidgets.QWidget):
         # 설정 화면: 뒤로 · 캘리브레이션 · 윙크 클릭 · 응시 클릭 · 상태 확인 + 아래 테마 바둑알 8개
         self.back_card = ActionCard(self, "back", "뒤로", "메뉴로 돌아가기")
         self.calib_card = ActionCard(self, "calib", "캘리브레이션", "다시 맞추기")
+        self.number_card = ActionCard(self, "digits", "정확도 높이기", "숫자 보며 맞추기")
         self.wink_card = ActionCard(self, "wink", "윙크 클릭", "누르면 바뀌어요")
         self.dwell_card = ActionCard(self, "dwell", "응시 클릭", "메뉴 밖에서 보면 클릭")
         self.status_card = ActionCard(self, "status", "상태 확인", "카메라 · 눈 · 정확도")
-        self.settings_cards = [self.back_card, self.calib_card, self.wink_card, self.dwell_card]
+        self.settings_cards = [self.back_card, self.calib_card, self.number_card, self.wink_card, self.dwell_card]
         if SHOW_STATUS_BUTTON:
             self.settings_cards.append(self.status_card)
         self.calib_card.set_chip("두더지 잡기", theme.YELLOW)
+        self.number_card.set_chip("숫자 12개", theme.YELLOW)
         self.back_card.clicked.connect(lambda: self.show_page("main"))
         self.calib_card.clicked.connect(lambda: self.recalibrate_requested.emit())
+        self.number_card.clicked.connect(lambda: self.number_check_requested.emit())
         self.wink_card.clicked.connect(lambda: self.wink_toggle_requested.emit())
         self.dwell_card.clicked.connect(lambda: self.dwell_toggle_requested.emit())
         self.status_card.clicked.connect(lambda: self.status_requested.emit())
@@ -693,7 +701,7 @@ class MenuPanel(QtWidgets.QWidget):
 
         # 설정 화면: 카드 4~5개 + 아래 테마 줄
         n = len(self.settings_cards)
-        cw2 = (W - 2 * pad - 4 * gap) / 5
+        cw2 = (W - 2 * pad - 5 * gap) / 6                       # 첫 화면과 같은 6칸 폭 (카드 6장이 꽉 차게, 5장이면 가운데 정렬)
         total = n * cw2 + (n - 1) * gap
         x0 = pad + (W - 2 * pad - total) / 2
         for i, card in enumerate(self.settings_cards):
@@ -744,6 +752,9 @@ class MenuPanel(QtWidgets.QWidget):
         self.wink_card.set_chip(WINK_NAMES.get(st["wink"], "아무 쪽 눈"),
                                 theme.GREEN if st["wink"] != "off" else th["off"])
         self.dwell_card.set_toggle(st["dwell"])
+        err = st.get("check_err")
+        self.number_card.set_chip(f"오차 약 {err:.0f}px" if err else "숫자 12개",
+                                  th["accent"] if err else theme.YELLOW)
         status_on = st.get("status", False)
         self.status_card.set_chip("열림" if status_on else "닫힘", theme.GREEN if status_on else th["off"])
 

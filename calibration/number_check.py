@@ -30,6 +30,11 @@ RADIUS_PX = 110.0          # 처음 인정 반경 (숫자 중심에서 이만큼
 RADIUS_GROW = 1.25         # 못 통과하면 4초마다 반경 × 1.25
 RADIUS_STEP_SEC = 4.0
 RADIUS_MAX_MUL = 2.0       # 반경 최대 = 처음의 2배
+FORCE_AFTER_SEC = 3.0      # [고정 통과] 이 시간이 지나도 못 통과했고,
+FORCE_STILL_SEC = 1.2      #   시선이 이 시간 동안 한 자리에 가만히 있고 (흔들림이 아래 값 이하),
+FORCE_STILL_PX = 50.0      #   (연속 점들이 이 폭 안에 있음 = 눈이 크게 안 움직임)
+FORCE_RADIUS_FRAC = 0.18   #   그 자리가 숫자에서 화면 대각선의 이 비율 안이면 → 그 숫자를 보고 있다고 보고 통과시킴
+                           #   (숫자끼리는 대각선의 0.28 이상 떨어져 있어서, 방금 본 숫자에 멈춰 있는 경우는 걸러짐)
 SKIP_SEC = 12.0            # 이 시간 안에 통과 못 하면 건너뜀
 MIN_FAR = 0.28             # 연속된 숫자는 화면 대각선(비율)의 이만큼 이상 떨어지게 배치
 GOAL_PX, MID_GOAL_PX = 50.0, 80.0   # 설계 목표 (보고서와 동일)
@@ -69,6 +74,8 @@ class NumberCheck:
         self.state = "play"
         self.errs = []                               # 통과한 숫자의 오차(px)
         self.skipped = 0
+        self.forced = 0                              # '가만히 보고 있어서' 고정 통과된 숫자 개수
+        self.recent = []                             # 최근 시선 점 (시각, x, y) — 고정 통과 판정용
         self.t_target0 = None
         self.t_result = None
         self._reset_dwell()
@@ -115,6 +122,10 @@ class NumberCheck:
         if self.t_target0 is None:
             self.t_target0 = now
         tx, ty = self.target
+        self.recent.append((now, x, y))
+        self.recent = [r for r in self.recent if now - r[0] <= FORCE_STILL_SEC]
+        if self._check_forced(now, tx, ty):
+            return
         if math.hypot(x - tx, y - ty) <= self.radius(now):
             if self.dwell_since is None:
                 self.dwell_since, self.pts = now, []
@@ -125,6 +136,32 @@ class NumberCheck:
                 self._pass(now)
         elif self.dwell_since is not None and now - self.last_in > LEAVE_GRACE:
             self._reset_dwell()
+
+    def _still_info(self, now, tx, ty):
+        """최근 FORCE_STILL_SEC 동안 시선이 한 자리에 가만히 있었는지: (가만히 있던 비율 0~1, 중앙 위치 또는 None)."""
+        if len(self.recent) < 5:
+            return 0.0, None
+        span = self.recent[-1][0] - self.recent[0][0]
+        xs, ys = [r[1] for r in self.recent], [r[2] for r in self.recent]
+        if max(xs) - min(xs) > FORCE_STILL_PX * 2 or max(ys) - min(ys) > FORCE_STILL_PX * 2:
+            return 0.0, None
+        return min(span / FORCE_STILL_SEC, 1.0), (median(xs), median(ys))
+
+    def _check_forced(self, now, tx, ty):
+        """안 맞아서 못 통과하더라도, 숫자 근처에서 눈이 가만히 있으면 그 숫자를 보고 있는 것으로 보고 통과시킴.
+        (모델이 가장 안 맞는 자리가 오히려 가장 쓸모 있는 학습 데이터라서, 건너뛰면 아깝다)"""
+        if self.t_target0 is None or now - self.t_target0 < FORCE_AFTER_SEC:
+            return False
+        frac, pos = self._still_info(now, tx, ty)
+        if pos is None or frac < 0.9:      # 프레임 간격 때문에 딱 1.0이 안 나올 수 있어 0.9로 봄
+            return False
+        if math.hypot(pos[0] - tx, pos[1] - ty) > FORCE_RADIUS_FRAC * math.hypot(self.w, self.h):
+            return False
+        self.errs.append(math.hypot(pos[0] - tx, pos[1] - ty))    # 오차는 솔직하게 기록 (못 맞춘 만큼 평균에 반영됨)
+        self.forced += 1
+        self.on_sample(now, tx, ty)
+        self._next(now)
+        return True
 
     def update(self, now):
         if self.state == "play":
@@ -144,6 +181,7 @@ class NumberCheck:
         self._next(now)
 
     def _next(self, now):
+        self.recent = []
         self.idx += 1
         self.t_target0 = now
         self._reset_dwell()
