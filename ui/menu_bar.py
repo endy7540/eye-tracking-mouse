@@ -25,12 +25,17 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
         1. 커서 투명도 (-/+ 누를 때마다 10%씩, 높을수록 투명)
         2. 일시정지    (커서만 숨김, 자물쇠 3초 응시로 다시 활성화)
         3. 키보드      (화상 키보드 열기/닫기)
-        4. 시선 잔상   (ON/OFF)
+        4. 게임        → 게임 화면으로
         5. 설정        → 설정 화면으로
         6. 종료 (빨강) — 실수로 꺼지지 않게 두 번 눌러야 함 (첫 번째 → "한 번 더 윙크하면 종료", 3초 안에 한 번 더)
-    - 설정 화면: 뒤로 · 캘리브레이션 다시 하기 · 윙크 클릭(아무 쪽 → 왼눈 → 오른눈 → 끔) · 응시 클릭(ON/OFF)
-                · 게임 1 · 게임 2 (설정 화면에서 별도 미니게임 파일 실행 — 아래 GAME1_FILE / GAME2_FILE 참고)
-                · 상태 확인 + 아래 줄에 테마 고르기 (무광 바둑알 8개: 하늘·민트·라벤더·노을·체리·슬레이트·화이트·다크)
+    - 게임 화면: 큰 카드 2개 (미니게임 · 두더지잡기). 누르면 게임 파일을 따로 실행하고 메뉴창은 닫힘.
+                실행할 파일 이름은 아래 GAME1_FILE / GAME2_FILE, 파일이 없으면 카드에 "파일 없음"이 잠깐 뜸
+    - 설정 화면: 가로로 넓은 카드 3개씩 2줄 + 아래 줄에 테마 고르기
+                1줄 = 캘리브레이션 다시 하기 · 정확도 높이기(숫자 맞추기) · 윙크 클릭(아무 쪽 → 왼눈 → 오른눈 → 끔)
+                2줄 = 응시 클릭(ON/OFF) · 시선 잔상(ON/OFF) · 상태 확인
+                테마 = 무광 바둑알 8개 (하늘·민트·라벤더·노을·체리·슬레이트·화이트·다크)
+                가로 카드는 높이가 낮아서 "윙크하면 선택" 글자 대신 윙크 모양 동그라미를 카드 오른쪽에 띄움
+    - 게임·설정 화면은 머리줄 왼쪽 "‹ 뒤로" 버튼으로 첫 화면에 돌아감
     - 카드마다 아래쪽에 그림자 (화이트 테마는 흰 바탕끼리 구별되게 진하게)
     - 크기: 1920×1080 화면 기준 1620×750. 화면이 작으면 비율대로 줄어들고, 오른쪽 스크롤 토글과 겹치지 않게 맞춤 (_relayout)
 
@@ -40,6 +45,7 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
 이 파일의 위젯들은 "버튼이 눌렸다"는 신호만 내보내고, 실제로 무엇을 할지는 main.py가 정합니다.
 
 [제출 전] 상태 확인은 개발할 때만 쓰는 것이라 SHOW_STATUS_BUTTON = False로 바꾸면 설정 화면에서 사라집니다.
+         (2줄째가 카드 2개가 되고 가운데로 모임)
 """
 import math
 import os
@@ -646,6 +652,193 @@ class PanelCloseButton(GazeButton):
         p.drawLine(QtCore.QPointF(c.x() - d, c.y() + d), QtCore.QPointF(c.x() + d, c.y() - d))
 
 
+MINIGAME_NAMES = ["두더지 잡기", "반짝이 잡기", "숫자 순서 찍기", "따라잡기", "다른 그림 찾기", "폭탄 피하기"]
+MINIGAME_COLORS = [(238, 118, 88), (248, 196, 60), (59, 142, 234), (32, 178, 150), (138, 106, 228), (226, 92, 146)]
+WIDE_H = 186              # 설정 화면 가로 카드 높이 (기준 크기)
+
+
+def _color_stone(rgb):
+    """색 하나로 바둑알 색 묶음 만들기 (게임 카드의 작은 바둑알용)."""
+    return {"key": "game", "dark": False, "stone": QtGui.QColor(*rgb),
+            "stone_side": QtGui.QColor(*(int(v * 0.6) for v in rgb))}
+
+
+def paint_wink_badge(p, cx, cy, th, s):
+    """가로 카드용 윙크 표시: 글자 없이 윙크 모양 동그라미만 (안내 글자는 머리줄에 있음)."""
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(theme.with_alpha(th["accent"], 0.96))
+    p.drawEllipse(QtCore.QPointF(cx, cy), 28 * s, 28 * s)
+    fg = th["on"]
+    p.setPen(_pen(fg, 2.5 * s))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawEllipse(QtCore.QPointF(cx - 9 * s, cy - 2 * s), 6 * s, 6 * s)
+    path = QtGui.QPainterPath(QtCore.QPointF(cx + 3 * s, cy - 3 * s))
+    path.quadTo(QtCore.QPointF(cx + 9 * s, cy + 3 * s), QtCore.QPointF(cx + 15 * s, cy - 3 * s))
+    p.drawPath(path)
+    p.drawArc(QtCore.QRectF(cx - 9 * s, cy - 5 * s, 18 * s, 18 * s), -30 * 16, -120 * 16)   # 웃는 입
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(fg)
+    p.drawEllipse(QtCore.QPointF(cx - 9 * s, cy - 2 * s), 2.4 * s, 2.4 * s)
+
+
+class WideCard(GazeButton):
+    """설정 화면의 가로로 넓은 카드: 왼쪽 큰 아이콘, 오른쪽에 이름 → 설명 → 지금 상태(알약 또는 ON/OFF).
+    가로 카드는 높이가 낮아서 '윙크하면 선택' 글자 대신 윙크 모양 동그라미를 카드 오른쪽에 띄움."""
+
+    def __init__(self, parent, kind, title, sub):
+        super().__init__("", parent)
+        self.wink_only = True
+        self.kind, self.title, self.sub = kind, title, sub
+        self.footer = ("chip", "", OFF_GRAY)
+        self.s = 1.0
+
+    def set_scale(self, s):
+        self.s = s
+        self.update()
+
+    def set_chip(self, text, dot):
+        self.footer = ("chip", text, dot)
+        self.update()
+
+    def set_toggle(self, on):
+        self.footer = ("toggle", on)
+        self.update()
+
+    def paintEvent(self, event):
+        th, s = theme.current(), self.s
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        r = QtCore.QRectF(self.rect()).adjusted(8 * s, 8 * s, -8 * s, -SHADOW_PAD * s)
+        hl = self.is_highlighted()
+        paint_card(p, r, th, hl, s)
+        icy = r.center().y()
+        ic = QtCore.QPointF(r.left() + 88 * s, icy)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(th["light"])
+        p.drawEllipse(ic, 62 * s, 62 * s)
+        draw_icon(p, self.kind, ic, 74 * s, th["deep"])
+        tx = r.left() + 176 * s
+        text_w = r.right() - 84 * s - tx                       # 오른쪽 윙크 표시 자리는 비워 둠
+        p.setPen(th["deep"])
+        p.setFont(_fit_font(34 * s, self.title, text_w))
+        p.drawText(QtCore.QRectF(tx, r.top() + 28 * s, text_w, 50 * s),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, self.title)
+        p.setPen(theme.with_alpha(th["deep"], 0.8))
+        p.setFont(_fit_font(20 * s, self.sub, text_w, bold=False))
+        p.drawText(QtCore.QRectF(tx, r.top() + 78 * s, text_w, 36 * s),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, self.sub)
+        fy = r.top() + 144 * s
+        if self.footer[0] == "toggle":
+            paint_toggle(p, tx + 104 * 1.1 * s / 2, fy, self.footer[1], th, s, k=1.1)
+        elif self.footer[1]:
+            fw = QtGui.QFontMetricsF(theme.ui_font(22 * s)).horizontalAdvance(self.footer[1]) + 2.4 * 22 * s
+            paint_chip(p, tx + fw / 2, fy, self.footer[1], self.footer[2], th, s)
+        if hl:
+            paint_wink_badge(p, r.right() - 46 * s, icy, th, s)
+
+
+class GameCard(GazeButton):
+    """게임 화면의 큰 카드 (반씩). variant: "mini" = 미니게임 6종 이름, "mole" = 두더지·뿅망치 그림.
+    누르면 MenuPanel이 게임 파일을 따로 실행 (launch_game)."""
+
+    def __init__(self, parent, variant, title, sub):
+        super().__init__("", parent)
+        self.wink_only = True
+        self.variant, self.title, self.sub = variant, title, sub
+        self.footer = ("chip", "열기 ›", OFF_GRAY)
+        self.s = 1.0
+
+    def set_scale(self, s):
+        self.s = s
+        self.update()
+
+    def set_chip(self, text, dot):
+        self.footer = ("chip", text, dot)
+        self.update()
+
+    def paintEvent(self, event):
+        th, s = theme.current(), self.s
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        r = _card_body(self, s)
+        hl = self.is_highlighted()
+        paint_card(p, r, th, hl, s)
+        art = QtCore.QRectF(r.left() + 44 * s, r.top() + 38 * s, r.width() - 88 * s, 236 * s)
+        if self.variant == "mini":                                  # 미니게임 6종 이름 (3개씩 2줄)
+            gw = (art.width() - 2 * 16 * s) / 3
+            for k, (name, rgb) in enumerate(zip(MINIGAME_NAMES, MINIGAME_COLORS)):
+                gx = art.left() + (k % 3) * (gw + 16 * s)
+                gy = art.top() + 22 * s + (k // 3) * 100 * s
+                box = QtCore.QRectF(gx, gy, gw, 78 * s)
+                col = QtGui.QColor(*rgb)
+                p.setPen(QtGui.QPen(col, 2 * s))
+                p.setBrush(QtGui.QColor(*(int(v * 0.14 + 255 * 0.86) for v in rgb)) if not th["dark"]
+                           else QtGui.QColor(*(int(v * 0.25 + 40 * 0.75) for v in rgb)))
+                p.drawRoundedRect(box, 20 * s, 20 * s)
+                paint_stone(p, box.left() + 34 * s, box.center().y(), 15 * s, _color_stone(rgb), 1.0, 0.25)
+                p.setPen(th["deep"])
+                tw = box.width() - 66 * s
+                p.setFont(_fit_font(21 * s, name, tw))
+                p.drawText(QtCore.QRectF(box.left() + 58 * s, box.top(), tw, box.height()),
+                           QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, name)
+        else:                                                       # 두더지 + 뿅망치 그림
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(90, 60, 50) if th["dark"] else QtGui.QColor(255, 238, 230))
+            p.drawRoundedRect(art, 26 * s, 26 * s)
+            sz = 222 * s
+            mole = theme.pixmap("mole.png")
+            if not mole.isNull():
+                p.drawPixmap(QtCore.QRectF(art.center().x() - sz / 2, art.top() + 6 * s, sz, sz), mole,
+                             QtCore.QRectF(mole.rect()))
+            hammer = theme.pixmap("hammer.png")
+            if not hammer.isNull():
+                p.drawPixmap(QtCore.QRectF(art.center().x() + 70 * s, art.top() + 2 * s, 86 * s, 138 * s), hammer,
+                             QtCore.QRectF(hammer.rect()))
+        p.setPen(th["deep"])
+        p.setFont(theme.title_font(54 * s))
+        p.drawText(QtCore.QRectF(r.left(), r.top() + 296 * s, r.width(), 66 * s), QtCore.Qt.AlignCenter, self.title)
+        p.setPen(theme.with_alpha(th["deep"], 0.8))
+        p.setFont(_fit_font(22 * s, self.sub, r.width() - 40 * s, bold=False))
+        p.drawText(QtCore.QRectF(r.left() + 20 * s, r.top() + 364 * s, r.width() - 40 * s, 36 * s),
+                   QtCore.Qt.AlignCenter, self.sub)
+        if self.footer[1]:
+            paint_chip(p, r.center().x(), r.bottom() - 70 * s, self.footer[1], self.footer[2], th, s, px=26)
+        if hl:
+            paint_wink_hint(p, r.center().x(), r.top() - 2 * s, th, s)
+
+
+class HeaderBackButton(GazeButton):
+    """머리줄 왼쪽 '‹ 뒤로' 버튼 (게임·설정 화면에서 첫 화면으로)."""
+
+    def __init__(self, parent):
+        super().__init__("", parent)
+        self.wink_only = True
+        self.s = 1.0
+
+    def paintEvent(self, event):
+        th, s = theme.current(), self.s
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        r = QtCore.QRectF(self.rect()).adjusted(4 * s, 4 * s, -4 * s, -4 * s)
+        hl = self.is_highlighted()
+        if hl:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(theme.with_alpha(th["accent"], 0.3))
+            p.drawRoundedRect(r.adjusted(-3 * s, -3 * s, 3 * s, 3 * s), r.height() / 2 + 3 * s, r.height() / 2 + 3 * s)
+        p.setPen(QtGui.QPen(th["ring"] if hl else th["border"], (5 if hl else 2) * s))
+        p.setBrush(th["light"])
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        cy = r.center().y()
+        x = r.left() + 32 * s
+        p.setPen(_pen(th["deep"], 5 * s))
+        p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x + 8 * s, cy - 12 * s), QtCore.QPointF(x - 4 * s, cy),
+                                        QtCore.QPointF(x + 8 * s, cy + 12 * s)]))
+        p.setPen(th["deep"])
+        p.setFont(theme.ui_font(26 * s))
+        p.drawText(QtCore.QRectF(x + 22 * s, r.top(), r.right() - x - 30 * s, r.height()),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, "뒤로")
+
+
 class MenuPanel(QtWidgets.QWidget):
     close_requested = QtCore.pyqtSignal()
     transparency_up_requested = QtCore.pyqtSignal()     # 커서 투명도 + (더 투명하게)
@@ -661,82 +854,93 @@ class MenuPanel(QtWidgets.QWidget):
     theme_selected = QtCore.pyqtSignal(str)             # 고른 테마 key (예: "mint")
     quit_requested = QtCore.pyqtSignal()
 
+    PAGE_TITLES = {"main": "메뉴", "games": "게임", "settings": "설정"}
+    PAGE_HINTS = {"main": "보고 윙크하면 선택돼요  (메뉴 안에서는 응시 클릭 꺼짐)",
+                  "games": "보고 윙크하면 게임이 열려요", "settings": "보고 윙크하면 선택돼요"}
+
     def __init__(self):
         super().__init__()
         setup_floating_window(self)
         self.s = 1.0
-        self.page = "main"            # "main" = 첫 화면 / "settings" = 설정 화면
+        self.page = "main"            # "main" = 첫 화면 / "games" = 게임 화면 / "settings" = 설정 화면
         self.header_rect = QtCore.QRectF()
         self.theme_rect = QtCore.QRectF()
 
         self.close_btn = PanelCloseButton(self)
         self.close_btn.clicked.connect(lambda: self.close_requested.emit())
+        self.back_btn = HeaderBackButton(self)                 # 게임·설정 화면에서 첫 화면으로
+        self.back_btn.clicked.connect(lambda: self.show_page("main"))
 
         # 첫 화면: 세로로 긴 카드 6개 (맨 오른쪽 = 종료)
         self.opacity_card = StepperCard(self, "opacity", "커서 투명도")
         self.pause_card = ActionCard(self, "pause", "일시정지", "커서 숨기기", tall=True)
         self.keyboard_card = ActionCard(self, "keyboard", "키보드", "화상 키보드", tall=True)
-        self.trail_card = ActionCard(self, "trail", "시선 잔상", "지나간 길 표시", tall=True)
-        self.settings_card = ActionCard(self, "gear", "설정", "테마 · 보정 · 클릭", tall=True)
+        self.games_card = ActionCard(self, "game", "게임", "시선 게임 2종", tall=True)
+        self.settings_card = ActionCard(self, "gear", "설정", "보정 · 클릭 · 테마", tall=True)
         self.quit_card = QuitCard(self)
         self.main_cards = [self.opacity_card, self.pause_card, self.keyboard_card,
-                           self.trail_card, self.settings_card, self.quit_card]
+                           self.games_card, self.settings_card, self.quit_card]
         self.opacity_card.minus.clicked.connect(lambda: self.transparency_down_requested.emit())
         self.opacity_card.plus.clicked.connect(lambda: self.transparency_up_requested.emit())
         self.pause_card.clicked.connect(lambda: self.pause_requested.emit())
         self.keyboard_card.clicked.connect(lambda: self.keyboard_toggle_requested.emit())
-        self.trail_card.clicked.connect(lambda: self.trail_toggle_requested.emit())
+        self.games_card.clicked.connect(lambda: self.show_page("games"))
         self.settings_card.clicked.connect(lambda: self.show_page("settings"))
         self.quit_card.clicked.connect(self._on_quit)
         self.quit_timer = QtCore.QTimer(self)
         self.quit_timer.setSingleShot(True)
         self.quit_timer.timeout.connect(self._disarm_quit)
 
-        # 설정 화면: 뒤로 · 캘리브레이션 · 윙크 클릭 · 응시 클릭 · 상태 확인 + 아래 테마 바둑알 8개
-        self.back_card = ActionCard(self, "back", "뒤로", "메뉴로 돌아가기")
-        self.calib_card = ActionCard(self, "calib", "캘리브레이션", "다시 맞추기")
-        self.number_card = ActionCard(self, "digits", "정확도 높이기", "숫자 보며 맞추기")
-        self.wink_card = ActionCard(self, "wink", "윙크 클릭", "누르면 바뀌어요")
-        self.dwell_card = ActionCard(self, "dwell", "응시 클릭", "메뉴 밖에서 보면 클릭")
-        self.status_card = ActionCard(self, "status", "상태 확인", "카메라 · 눈 · 정확도")
-        self.game1_card = ActionCard(self, "game", GAME1_TITLE, "미니게임 실행")
-        self.game2_card = ActionCard(self, "game", GAME2_TITLE, "미니게임 실행")
-        self.settings_cards = [self.back_card, self.calib_card, self.number_card, self.wink_card, self.dwell_card,
-                               self.game1_card, self.game2_card]
-        if SHOW_STATUS_BUTTON:
-            self.settings_cards.append(self.status_card)
-        self.calib_card.set_chip("두더지 잡기", theme.YELLOW)
-        self.number_card.set_chip("숫자 12개", theme.YELLOW)
-        self.back_card.clicked.connect(lambda: self.show_page("main"))
-        self.calib_card.clicked.connect(lambda: self.recalibrate_requested.emit())
-        self.number_card.clicked.connect(lambda: self.number_check_requested.emit())
-        self.wink_card.clicked.connect(lambda: self.wink_toggle_requested.emit())
-        self.dwell_card.clicked.connect(lambda: self.dwell_toggle_requested.emit())
-        self.status_card.clicked.connect(lambda: self.status_requested.emit())
+        # 게임 화면: 큰 카드 2개 (게임 파일 이름은 위쪽 GAME1_FILE / GAME2_FILE)
+        self.game1_card = GameCard(self, "mini", GAME1_TITLE, "시선으로 하는 게임 6종 · 클릭 없이 바라보기만")
+        self.game2_card = GameCard(self, "mole", GAME2_TITLE, "45초 동안 두더지를 잡아요 · 콤보 점수")
+        self.game_cards = [self.game1_card, self.game2_card]
         self.game1_card.clicked.connect(lambda: self._on_game(self.game1_card, GAME1_FILE))
         self.game2_card.clicked.connect(lambda: self._on_game(self.game2_card, GAME2_FILE))
         self._game_timer = QtCore.QTimer(self)               # "파일 없음" 표시를 잠시 뒤 원래대로
         self._game_timer.setSingleShot(True)
         self._game_timer.timeout.connect(self._reset_game_chips)
-        self._reset_game_chips()
+
+        # 설정 화면: 가로 카드 3개씩 2줄 + 아래 테마 바둑알 8개
+        self.calib_card = WideCard(self, "calib", "캘리브레이션", "두더지로 다시 맞추기")
+        self.number_card = WideCard(self, "digits", "정확도 높이기", "숫자 보며 맞추기")
+        self.wink_card = WideCard(self, "wink", "윙크 클릭", "누르면 바뀌어요")
+        self.dwell_card = WideCard(self, "dwell", "응시 클릭", "메뉴 밖에서 보면 클릭")
+        self.trail_card = WideCard(self, "trail", "시선 잔상", "지나간 길 표시")
+        self.status_card = WideCard(self, "status", "상태 확인", "카메라 · 눈 · 정확도")
+        self.settings_rows = [[self.calib_card, self.number_card, self.wink_card],
+                              [self.dwell_card, self.trail_card] + ([self.status_card] if SHOW_STATUS_BUTTON else [])]
+        self.settings_cards = self.settings_rows[0] + self.settings_rows[1]
+        self.calib_card.set_chip("두더지 잡기", theme.YELLOW)
+        self.number_card.set_chip("숫자 12개", theme.YELLOW)
+        self.calib_card.clicked.connect(lambda: self.recalibrate_requested.emit())
+        self.number_card.clicked.connect(lambda: self.number_check_requested.emit())
+        self.wink_card.clicked.connect(lambda: self.wink_toggle_requested.emit())
+        self.dwell_card.clicked.connect(lambda: self.dwell_toggle_requested.emit())
+        self.trail_card.clicked.connect(lambda: self.trail_toggle_requested.emit())
+        self.status_card.clicked.connect(lambda: self.status_requested.emit())
         self.swatches = []
         for t in theme.THEMES:
             sw = ThemeSwatch(self, t["key"])
             sw.clicked.connect(lambda _=False, k=t["key"]: self.theme_selected.emit(k))
             self.swatches.append(sw)
+        self._reset_game_chips()
 
         self._relayout()
         self.show_page("main")
 
     # ── 화면 전환 ────────────────────────────────────────────────
     def show_page(self, page):
-        """"main"(첫 화면) / "settings"(설정 화면) 전환."""
+        """"main"(첫 화면) / "games"(게임 화면) / "settings"(설정 화면) 전환."""
         self.page = page
         for c in self.main_cards:
             c.setVisible(page == "main")
+        for c in self.game_cards:
+            c.setVisible(page == "games")
         for c in self.settings_cards + self.swatches:
             c.setVisible(page == "settings")
         self.status_card.setVisible(page == "settings" and SHOW_STATUS_BUTTON)
+        self.back_btn.setVisible(page != "main")
         self.update()
 
     def showEvent(self, event):
@@ -754,7 +958,7 @@ class MenuPanel(QtWidgets.QWidget):
 
     def _reset_game_chips(self):
         accent = theme.current()["accent"]
-        for c in (self.game1_card, self.game2_card):
+        for c in self.game_cards:
             c.set_chip("열기 ›", accent)
 
     # ── 종료 (두 번 눌러야 종료) ──────────────────────────────────
@@ -784,36 +988,47 @@ class MenuPanel(QtWidgets.QWidget):
         self.setFixedSize(W, H)
         pad, gap = 40 * s, 24 * s
 
-        # 머리줄 + 오른쪽 위 X
+        # 머리줄 + 왼쪽 뒤로 + 오른쪽 위 X
         cb = int(64 * s)
         self.header_rect = QtCore.QRectF(pad, pad, W - 2 * pad - cb - 16 * s, 76 * s)
         self.close_btn.s = s
         self.close_btn.setFixedSize(cb, int(cb + 4 * s))
         self.close_btn.move(int(W - pad - cb), int(pad + 4 * s))
+        self.back_btn.s = s
+        self.back_btn.setFixedSize(int(168 * s), int(68 * s))
+        self.back_btn.move(int(pad + 4 * s), int(pad + 4 * s))
 
-        # 카드 위젯은 위로 '윙크하면 선택' 자리(HINT_PAD), 양옆·아래로 그림자 자리만큼 더 큼
-        top = pad + 76 * s + 22 * s - (HINT_PAD + 8) * s
+        content_top = pad + 76 * s + 22 * s                # 머리줄 아래 카드가 시작하는 곳
+        tall_h = H - pad - content_top                     # 첫 화면·게임 화면 카드 높이 (메뉴창 아래 여백까지)
+        top = content_top - (HINT_PAD + 8) * s             # 세로 카드 위젯은 위로 '윙크하면 선택' 자리만큼 더 큼
         ext_x, ext_b = 8 * s, SHADOW_PAD * s
 
-        # 첫 화면: 긴 카드 6개 (머리줄 아래부터 메뉴창 아래 여백까지)
-        tall_h = H - pad - (pad + 76 * s + 22 * s)
+        # 첫 화면: 긴 카드 6개
         cw = (W - 2 * pad - 5 * gap) / 6
         for i, card in enumerate(self.main_cards):
             card.setGeometry(int(pad + i * (cw + gap) - ext_x), int(top), int(cw + 2 * ext_x),
                              int(tall_h + (HINT_PAD + 8) * s + ext_b))
             card.set_scale(s)
 
-        # 설정 화면: 카드 4~5개 + 아래 테마 줄
-        n = len(self.settings_cards)
-        slots = max(n, 5)                                  # 5개까지는 예전과 같은 폭, 넘으면 줄여서 한 줄에
-        cw2 = (W - 2 * pad - (slots - 1) * gap) / slots
-        total = n * cw2 + (n - 1) * gap
-        x0 = pad + (W - 2 * pad - total) / 2
-        for i, card in enumerate(self.settings_cards):
-            card.setGeometry(int(x0 + i * (cw2 + gap) - ext_x), int(top), int(cw2 + 2 * ext_x),
-                             int(CARD_H * s + (HINT_PAD + 8) * s + ext_b))
+        # 게임 화면: 큰 카드 2개 (반씩)
+        gw = (W - 2 * pad - gap) / 2
+        for i, card in enumerate(self.game_cards):
+            card.setGeometry(int(pad + i * (gw + gap) - ext_x), int(top), int(gw + 2 * ext_x),
+                             int(tall_h + (HINT_PAD + 8) * s + ext_b))
             card.set_scale(s)
-        ty = pad + 76 * s + 22 * s + CARD_H * s + 24 * s
+
+        # 설정 화면: 가로 카드 3개씩 2줄 (줄에 카드가 적으면 가운데 정렬) + 아래 테마 줄
+        wc = (W - 2 * pad - 2 * gap) / 3
+        rh, rgap = WIDE_H * s, 22 * s
+        for r, row in enumerate(self.settings_rows):
+            y = content_top + r * (rh + rgap)
+            total = len(row) * wc + (len(row) - 1) * gap
+            x0 = pad + (W - 2 * pad - total) / 2
+            for i, card in enumerate(row):
+                card.setGeometry(int(x0 + i * (wc + gap) - 8 * s), int(y - 8 * s), int(wc + 16 * s),
+                                 int(rh + 8 * s + ext_b))
+                card.set_scale(s)
+        ty = content_top + 2 * rh + rgap + 24 * s
         self.theme_rect = QtCore.QRectF(pad, ty, W - 2 * pad, H - pad - ty)
         sw_x = pad + 270 * s
         sw_w = (self.theme_rect.right() - 20 * s - sw_x) / len(self.swatches)
@@ -829,8 +1044,10 @@ class MenuPanel(QtWidgets.QWidget):
 
     def refresh_theme(self):
         """테마가 바뀌면 메뉴창 전체를 다시 그림."""
+        self._reset_game_chips()
         self.update()
-        for w in self.main_cards + self.settings_cards + self.swatches + [self.close_btn, self.status_card]:
+        for w in (self.main_cards + self.game_cards + self.settings_cards + self.swatches
+                  + [self.close_btn, self.back_btn, self.status_card]):
             w.update()
         self.opacity_card.minus.update()
         self.opacity_card.plus.update()
@@ -838,7 +1055,7 @@ class MenuPanel(QtWidgets.QWidget):
     # ── 상태 표시 ────────────────────────────────────────────────
     def update_state(self, st):
         """main.py가 모드가 바뀔 때마다 호출.
-        st = {"paused", "trail", "keyboard", "wink", "dwell", "status", "opacity", "theme"}"""
+        st = {"paused", "trail", "keyboard", "wink", "dwell", "status", "opacity", "theme", (있으면) "check_err"}"""
         th = theme.current()
         op = st.get("opacity", 0.6)
         self.opacity_card.set_value(f"{round((1 - op) * 100)}%", "높을수록 투명")
@@ -851,18 +1068,19 @@ class MenuPanel(QtWidgets.QWidget):
             self.pause_card.set_chip("실행 중", theme.GREEN)
         self.keyboard_card.set_chip("열림" if st["keyboard"] else "닫힘",
                                     theme.GREEN if st["keyboard"] else th["off"])
-        self.trail_card.set_toggle(st["trail"])
+        self.games_card.set_chip("들어가기 ›", th["accent"])
         self.settings_card.set_chip("들어가기 ›", th["accent"])
-        self.back_card.set_chip("메뉴", th["accent"])
+        self.trail_card.set_toggle(st["trail"])
         self.wink_card.set_chip(WINK_NAMES.get(st["wink"], "아무 쪽 눈"),
                                 theme.GREEN if st["wink"] != "off" else th["off"])
         self.dwell_card.set_toggle(st["dwell"])
+        status_on = st.get("status", False)
+        self.status_card.set_chip("열림" if status_on else "닫힘", theme.GREEN if status_on else th["off"])
         err = st.get("check_err")
         self.number_card.set_chip(f"오차 약 {err:.0f}px" if err else "숫자 12개",
                                   th["accent"] if err else theme.YELLOW)
-        self._reset_game_chips()
-        status_on = st.get("status", False)
-        self.status_card.set_chip("열림" if status_on else "닫힘", theme.GREEN if status_on else th["off"])
+        if not self._game_timer.isActive():                  # "파일 없음"을 보여주는 중이면 그대로 둠
+            self._reset_game_chips()
 
         key = st.get("theme", theme.current_key())
         for sw in self.swatches:
@@ -882,23 +1100,24 @@ class MenuPanel(QtWidgets.QWidget):
         p.setBrush(th["panel"])
         p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(2 * s, 2 * s, -2 * s, -2 * s), 44 * s, 44 * s)
 
-        # 머리줄 (뒤 화면 글씨와 겹쳐도 읽히도록 카드색 바탕)
+        # 머리줄 (뒤 화면 글씨와 겹쳐도 읽히도록 카드색 바탕). 게임·설정 화면은 왼쪽에 '뒤로' 버튼
         hr = self.header_rect
         paint_soft_shadow(p, hr, hr.height() / 2, th, s * 0.7)
         p.setPen(QtGui.QPen(th["border"], 2 * s))
         p.setBrush(th["card"])
         p.drawRoundedRect(hr, hr.height() / 2, hr.height() / 2)
-        title = "메뉴 › 설정" if self.page == "settings" else "메뉴"
-        hint = "보고 윙크하면 선택돼요  (메뉴 안에서는 응시 클릭 꺼짐)"
+        title = self.PAGE_TITLES.get(self.page, "메뉴")
+        hint = self.PAGE_HINTS.get(self.page, "")
         tf = theme.title_font(44 * s)
         tw = QtGui.QFontMetricsF(tf).horizontalAdvance(title)
+        tx = hr.left() + (32 if self.page == "main" else 4 + 168 + 26) * s
         p.setPen(th["deep"])
         p.setFont(tf)
-        p.drawText(QtCore.QRectF(hr.left() + 32 * s, hr.top(), tw + 10 * s, hr.height()),
+        p.drawText(QtCore.QRectF(tx, hr.top(), tw + 10 * s, hr.height()),
                    QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, title)
         p.setPen(theme.with_alpha(th["deep"], 0.85))
         p.setFont(theme.ui_font(22 * s))
-        p.drawText(QtCore.QRectF(hr.left() + 60 * s + tw, hr.top(), hr.width() - 80 * s - tw, hr.height()),
+        p.drawText(QtCore.QRectF(tx + tw + 28 * s, hr.top(), hr.right() - (tx + tw + 48 * s), hr.height()),
                    QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, hint)
 
         # 설정 화면: 테마 칸 바탕 + 제목 (바둑알들은 ThemeSwatch가 따로 그림)
