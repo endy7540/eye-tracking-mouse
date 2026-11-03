@@ -70,6 +70,11 @@ from ui.menu_bar import MenuDock, MenuPanel
 from ui.onscreen_keyboard import OnScreenKeyboard
 
 
+# 게임이 실행되는 동안 시선 커서(도장)까지 숨길 게임 파일 이름. 여기에 없는 게임(예: minigames)은 커서는 보이고
+# 메뉴 아이콘·스크롤 버튼·상태 글자만 숨겨요.
+HIDE_CURSOR_GAMES = ("gaze_shooter",)
+
+
 class DemoApp(QtCore.QObject):
     def __init__(self, app, args):
         super().__init__()
@@ -115,6 +120,8 @@ class DemoApp(QtCore.QObject):
         self.synthetic_until = 0.0     # 우리가 만든 클릭 직후엔 '실제 마우스 클릭'으로 착각해 학습하지 않도록
         self.calib_win = None
         self.checking = False          # 숫자 맞추기(정확도 확인) 중
+        self.game_running = False      # 미니게임이 실행 중 (그동안 메뉴 아이콘·스크롤 버튼을 숨김)
+        self.game_proc = None
         self.number_win = None
         self.check_err = None          # 마지막 숫자 맞추기의 평균 오차(px)
 
@@ -152,6 +159,7 @@ class DemoApp(QtCore.QObject):
         self.panel.trail_toggle_requested.connect(self.toggle_trail)
         self.panel.recalibrate_requested.connect(self.recalibrate)
         self.panel.number_check_requested.connect(self.run_number_check)
+        self.panel.game_launched.connect(self.on_game_launched)
         self.panel.wink_toggle_requested.connect(self.toggle_wink)
         self.panel.dwell_toggle_requested.connect(self.toggle_dwell)
         self.panel.status_requested.connect(self.toggle_status)
@@ -310,7 +318,7 @@ class DemoApp(QtCore.QObject):
         self.checking = False
         self.number_win = None
         self.interaction.enabled = True
-        self.dock.show()
+        self._show_dock()
         if errs:
             self.check_err = sum(errs) / len(errs)
             print(f"[숫자 맞추기] 평균 오차 약 {self.check_err:.0f}px (통과 {len(errs)}개, 건너뜀 {skipped}개)")
@@ -331,7 +339,7 @@ class DemoApp(QtCore.QObject):
         self.cursor.set_paused(False)
         self.dock.set_locked(False)
         self.cursor.show()
-        self.dock.show()
+        self._show_dock()
         self._apply_state()
         self.last_eye_t = time.time()
         self.cursor.set_eye_lost(False)
@@ -355,6 +363,8 @@ class DemoApp(QtCore.QObject):
         if feat is not None:
             self.last_face_t = t
         gesture = self.blink_gesture.update(opens, self.session.base, t)   # 일시정지 중에도 동작해야 다시 켤 수 있음
+        if self.game_running:                               # 게임 중엔 '뒤로가기·일시정지' 깜빡임 제스처를 무시 (게임 조작과 겹치지 않게)
+            gesture = None
         if gesture == "back" and self._clicking_ready():
             print("[깜빡임] 3번 → 뒤로가기")
             send_back()
@@ -406,7 +416,7 @@ class DemoApp(QtCore.QObject):
             self.dock.update_gaze(x, y)                 # 커서가 가까이 오면 메뉴 아이콘이 나타남
         self.interaction.update_gaze(x, y, now)         # 응시 클릭 + 하이라이트
         self.scroller.update(x, y, now, self._scroll_blocked())    # 스크롤 모드 (꺼져 있으면 아무것도 안 함)
-        if self.dwell_on and self._clicking_ready():   # 응시 클릭: 데모 버튼·메뉴 위가 아닐 때만 (버튼은 자기 방식대로 눌림)
+        if self.dwell_on and self._clicking_ready() and not self.game_running:   # 응시 클릭: 데모 버튼·메뉴 위가 아닐 때만 (버튼은 자기 방식대로 눌림)
             if self.interaction.over_button() or self._over_own_window(x, y) or self.scroller.engaged:
                 self.dwell.reset()
             else:
@@ -440,7 +450,7 @@ class DemoApp(QtCore.QObject):
 
     def _scroll_blocked(self):
         """스크롤 띠를 잠깐 멈춰야 하는 상태 (모드는 그대로 두고 동작만 멈춤)."""
-        return (self.paused or self.calibrating or self.checking or self.keyboard_open or self.panel_open
+        return (self.paused or self.calibrating or self.checking or self.keyboard_open or self.panel_open or self.game_running
                 or self.interaction.over_button())
 
     def _on_scroll_auto_off(self):
@@ -574,6 +584,48 @@ class DemoApp(QtCore.QObject):
             self._save_model()
             self._apply_state()
 
+    # ── 게임 실행 중 화면 정리 ─────────────────────────────────────
+    def _show_dock(self):
+        """메뉴 아이콘(+스크롤 버튼·상태 글자)을 보임. 게임 중에는 보이지 않음."""
+        if not self.game_running:
+            self.dock.show()
+
+    def on_game_launched(self, proc, name):
+        """메뉴에서 게임을 켰을 때: 게임이 끝날 때까지 메뉴 아이콘·스크롤 버튼·상태 글자를 숨기고 스크롤 모드를 멈춤.
+        HIDE_CURSOR_GAMES 에 있는 게임이면 시선 커서(도장)도 숨김. 윙크 클릭은 그대로 동작함(게임에서 쓰므로)."""
+        self.game_proc = proc
+        self.game_running = True
+        self.interaction.reset()
+        if self.keyboard_open:
+            self.keyboard_open = False
+            self.keyboard.hide()
+        if self.status_win.isVisible():
+            self.toggle_status()
+        self.dock.hide()
+        if name in HIDE_CURSOR_GAMES:
+            self.cursor.set_hidden(True)
+        self._apply_state()
+        if getattr(self, "game_timer", None) is None:
+            self.game_timer = QtCore.QTimer(self)
+            self.game_timer.timeout.connect(self._check_game)
+        self.game_timer.start(400)
+
+    def _check_game(self):
+        if self.game_proc is None or self.game_proc.poll() is not None:
+            self._end_game()
+
+    def _end_game(self):
+        """게임이 끝남 → 숨겼던 것들을 되돌림."""
+        if getattr(self, "game_timer", None) is not None:
+            self.game_timer.stop()
+        self.game_proc = None
+        self.game_running = False
+        self.cursor.set_hidden(False)
+        self.interaction.reset()
+        if self.tracking_started and not self.calibrating and not self.checking:
+            self.dock.show()
+        self._apply_state()
+
     # ── 메뉴 동작 ─────────────────────────────────────────────────
     def open_panel(self):
         self.panel_open = True
@@ -585,7 +637,7 @@ class DemoApp(QtCore.QObject):
     def close_panel(self):
         self.panel_open = False
         self.panel.hide()
-        self.dock.show()
+        self._show_dock()
         self._apply_state()
 
     def pause(self):
@@ -605,7 +657,7 @@ class DemoApp(QtCore.QObject):
                 self.worker.preview_on = False
             self.status_win.hide()
         self.dock.set_locked(True)
-        self.dock.show()
+        self._show_dock()
         self._apply_state()
 
     def resume(self):
@@ -668,7 +720,7 @@ class DemoApp(QtCore.QObject):
               "theme": theme.current_key(), "check_err": self.check_err}
         self.panel.update_state(st)
         self.dock.set_scroll(self.scroll_on)        # 메뉴 아이콘 옆 스크롤 토글 표시
-        self.scroller.set_enabled(self.scroll_on and not self.paused)   # 스크롤 로직도 같은 값을 따라감 (일시정지 중엔 스크롤 띠도 숨김)
+        self.scroller.set_enabled(self.scroll_on and not self.paused and not self.game_running)   # 스크롤 로직도 같은 값을 따라감 (일시정지 중엔 스크롤 띠도 숨김)
         self.dock.set_menu_open(self.panel_open)    # 메뉴창이 열려 있으면 아이콘만 숨기고 토글은 그대로
 
         if self.paused:

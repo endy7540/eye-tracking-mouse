@@ -28,7 +28,7 @@ MenuPanel (메뉴창 — 화면 가운데에 크게, 테마색 반투명)
         4. 게임        → 게임 화면으로
         5. 설정        → 설정 화면으로
         6. 종료 (빨강) — 실수로 꺼지지 않게 두 번 눌러야 함 (첫 번째 → "한 번 더 윙크하면 종료", 3초 안에 한 번 더)
-    - 게임 화면: 큰 카드 2개 (미니게임 · 두더지잡기). 누르면 게임 파일을 따로 실행하고 메뉴창은 닫힘.
+    - 게임 화면: 큰 카드 2개 (미니게임 · 시선 슈터). 누르면 게임 파일을 따로 실행하고 메뉴창은 닫힘.
                 실행할 파일 이름은 아래 GAME1_FILE / GAME2_FILE, 파일이 없으면 카드에 "파일 없음"이 잠깐 뜸
     - 설정 화면: 가로로 넓은 카드 3개씩 2줄 + 아래 줄에 테마 고르기
                 1줄 = 캘리브레이션 다시 하기 · 정확도 높이기(숫자 맞추기) · 윙크 클릭(아무 쪽 → 왼눈 → 오른눈 → 끔)
@@ -68,9 +68,9 @@ SHOW_STATUS_BUTTON = True # [개발할 때만] 상태 확인 버튼 보이기 �
 #    개발 중에는 .py, 설치(배포) 후에는 .exe 를 자동으로 찾아서 실행합니다.
 #    게임 파일은 main.py와 같은 폴더에 두세요. 다른 폴더에 두고 싶으면 GAME_DIR = Path("...")로 바꾸면 됩니다.
 GAME1_FILE = "minigames"       # 첫 번째 게임 파일 이름
-GAME2_FILE = "mole_game"       # 두 번째 게임 파일 이름
+GAME2_FILE = "gaze_shooter"    # 두 번째 게임 파일 이름
 GAME1_TITLE = "미니게임"        # 카드에 보이는 이름 (원하는 대로 바꿔도 됨)
-GAME2_TITLE = "두더지잡기"
+GAME2_TITLE = "시선 슈터"
 
 
 def _app_dir():
@@ -105,7 +105,7 @@ def _find_game(name):
 
 
 def launch_game(name):
-    """게임 파일을 메인 프로그램과 따로 실행. 실행했으면 True, 파일이 없거나 실패하면 False."""
+    """게임 파일을 메인 프로그램과 따로 실행. 실행했으면 그 프로세스(Popen)를, 파일이 없거나 실패하면 None을 돌려줌."""
     path = _find_game(name)
     if path is None:
         return False
@@ -114,11 +114,10 @@ def launch_game(name):
             cmd = [sys.executable, str(path)]
         else:
             cmd = [str(path)]
-        subprocess.Popen(cmd, cwd=str(path.parent))
-        return True
+        return subprocess.Popen(cmd, cwd=str(path.parent))
     except Exception as e:
         print("[게임 실행 실패]", path, e)
-        return False
+        return None
 
 EDGE_MARGIN = 24          # 화면 가장자리와의 간격
 UNLOCK_DWELL_SEC = 3.0    # 자물쇠를 이만큼 바라보면 일시정지 해제 (요구사항: 3초)
@@ -737,8 +736,65 @@ class WideCard(GazeButton):
             paint_wink_badge(p, r.right() - 46 * s, icy, th, s)
 
 
+def paint_shooter_art(p, art, s):
+    """'시선 슈터' 카드 그림: 길 위로 외계인 무리가 내려오고 아래에서 군인 분대가 쏘는 모습 (그림 파일 없이 도형으로만 그림)."""
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(16, 20, 54))
+    p.drawRoundedRect(art, 26 * s, 26 * s)
+    cx, top, bot = art.center().x(), art.top() + 16 * s, art.bottom() - 8 * s
+    far, near = 34 * s, art.width() * 0.40
+
+    def px(f, t):                                         # f: 길 폭 비율(0~1), t: 위(0)~아래(1)
+        return cx + (f - 0.5) * 2 * (far + (near - far) * t)
+
+    def py(t):
+        return top + (bot - top) * t
+
+    road = QtGui.QPolygonF([QtCore.QPointF(px(0, 0), py(0)), QtCore.QPointF(px(1, 0), py(0)),
+                            QtCore.QPointF(px(1, 1), py(1)), QtCore.QPointF(px(0, 1), py(1))])
+    p.setBrush(QtGui.QColor(44, 52, 96))
+    p.drawPolygon(road)
+    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 70), max(1.0, 2 * s)))
+    for f in (0.3, 0.7):                                  # 3칸을 나누는 선
+        p.drawLine(QtCore.QPointF(px(f, 0), py(0)), QtCore.QPointF(px(f, 1), py(1)))
+    p.setPen(QtCore.Qt.NoPen)
+    for f, t, n in ((0.15, 0.30, 3), (0.5, 0.16, 5), (0.85, 0.36, 3)):      # 외계인 무리
+        for i in range(n):
+            ax = px(f, t) + (i - (n - 1) / 2) * 11 * s
+            ay = py(t) + (8 if i % 2 else -2) * s
+            p.setBrush(QtGui.QColor(255, 107, 107) if i % 3 else QtGui.QColor(255, 157, 77))
+            p.drawEllipse(QtCore.QPointF(ax, ay), 8.5 * s, 6.5 * s)
+            p.setBrush(QtGui.QColor(60, 12, 20))
+            p.drawEllipse(QtCore.QPointF(ax - 2.7 * s, ay - 0.6 * s), 1.5 * s, 1.7 * s)
+            p.drawEllipse(QtCore.QPointF(ax + 2.7 * s, ay - 0.6 * s), 1.5 * s, 1.7 * s)
+    for f, fill in ((0.15, 0.7), (0.85, 0.35)):                               # 버프 상자 (초록, 총으로 HP를 깎아야 얻음)
+        c = QtGui.QColor(61, 220, 132)
+        w = (px(f + 0.12, 0.62) - px(f - 0.12, 0.62))
+        bx, by = px(f, 0.62) - w / 2, py(0.62) - 9 * s
+        p.setPen(QtGui.QPen(c, max(1.0, 2 * s)))
+        p.setBrush(QtGui.QColor(c.red(), c.green(), c.blue(), 60))
+        p.drawRoundedRect(QtCore.QRectF(bx, by, w, 18 * s), 4 * s, 4 * s)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(c)
+        p.drawRoundedRect(QtCore.QRectF(bx + 3 * s, by + 12 * s, (w - 6 * s) * fill, 3.5 * s), 1.7 * s, 1.7 * s)
+        p.setPen(QtGui.QPen(c, max(1.5, 2.2 * s)))                                  # "+" 표시
+        p.drawLine(QtCore.QPointF(px(f, 0.62) - 4 * s, by + 5.5 * s), QtCore.QPointF(px(f, 0.62) + 4 * s, by + 5.5 * s))
+        p.drawLine(QtCore.QPointF(px(f, 0.62), by + 1.5 * s), QtCore.QPointF(px(f, 0.62), by + 9.5 * s))
+    p.setPen(QtCore.Qt.NoPen)
+    for i, ox in enumerate((-20, 20, 0)):                 # 군인 분대 (뒷모습)
+        sx, sy = cx + ox * s, bot - 20 * s + (0 if i < 2 else -12 * s)
+        p.setBrush(QtGui.QColor(170, 178, 190))
+        p.drawRoundedRect(QtCore.QRectF(sx + 4 * s, sy - 26 * s, 4 * s, 20 * s), 2 * s, 2 * s)
+        p.setBrush(QtGui.QColor(85, 107, 63))
+        p.drawRoundedRect(QtCore.QRectF(sx - 10 * s, sy - 6 * s, 20 * s, 16 * s), 5 * s, 5 * s)
+        p.setBrush(QtGui.QColor(107, 130, 80))
+        p.drawEllipse(QtCore.QPointF(sx, sy - 9 * s), 7.5 * s, 7.5 * s)
+        p.setBrush(QtGui.QColor(255, 227, 107))
+        p.drawEllipse(QtCore.QPointF(sx + 6 * s, sy - 29 * s), 3 * s, 3 * s)
+
+
 class GameCard(GazeButton):
-    """게임 화면의 큰 카드 (반씩). variant: "mini" = 미니게임 6종 이름, "mole" = 두더지·뿅망치 그림.
+    """게임 화면의 큰 카드 (반씩). variant: "mini" = 미니게임 6종 이름, "shooter" = 시선 슈터(군인·외계인) 그림.
     누르면 MenuPanel이 게임 파일을 따로 실행 (launch_game)."""
 
     def __init__(self, parent, variant, title, sub):
@@ -781,19 +837,8 @@ class GameCard(GazeButton):
                 p.setFont(_fit_font(21 * s, name, tw))
                 p.drawText(QtCore.QRectF(box.left() + 58 * s, box.top(), tw, box.height()),
                            QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, name)
-        else:                                                       # 두더지 + 뿅망치 그림
-            p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(QtGui.QColor(90, 60, 50) if th["dark"] else QtGui.QColor(255, 238, 230))
-            p.drawRoundedRect(art, 26 * s, 26 * s)
-            sz = 222 * s
-            mole = theme.pixmap("mole.png")
-            if not mole.isNull():
-                p.drawPixmap(QtCore.QRectF(art.center().x() - sz / 2, art.top() + 6 * s, sz, sz), mole,
-                             QtCore.QRectF(mole.rect()))
-            hammer = theme.pixmap("hammer.png")
-            if not hammer.isNull():
-                p.drawPixmap(QtCore.QRectF(art.center().x() + 70 * s, art.top() + 2 * s, 86 * s, 138 * s), hammer,
-                             QtCore.QRectF(hammer.rect()))
+        else:                                                       # 시선 슈터 그림
+            paint_shooter_art(p, art, s)
         p.setPen(th["deep"])
         p.setFont(theme.title_font(54 * s))
         p.drawText(QtCore.QRectF(r.left(), r.top() + 296 * s, r.width(), 66 * s), QtCore.Qt.AlignCenter, self.title)
@@ -853,6 +898,7 @@ class MenuPanel(QtWidgets.QWidget):
     status_requested = QtCore.pyqtSignal()
     theme_selected = QtCore.pyqtSignal(str)             # 고른 테마 key (예: "mint")
     quit_requested = QtCore.pyqtSignal()
+    game_launched = QtCore.pyqtSignal(object, str)      # 게임을 실행함 (실행 중인 프로세스, 게임 파일 이름) → main.py가 게임 중엔 메뉴·스크롤을 숨김
 
     PAGE_TITLES = {"main": "메뉴", "games": "게임", "settings": "설정"}
     PAGE_HINTS = {"main": "보고 윙크하면 선택돼요  (메뉴 안에서는 응시 클릭 꺼짐)",
@@ -893,7 +939,7 @@ class MenuPanel(QtWidgets.QWidget):
 
         # 게임 화면: 큰 카드 2개 (게임 파일 이름은 위쪽 GAME1_FILE / GAME2_FILE)
         self.game1_card = GameCard(self, "mini", GAME1_TITLE, "시선으로 하는 게임 6종 · 클릭 없이 바라보기만")
-        self.game2_card = GameCard(self, "mole", GAME2_TITLE, "45초 동안 두더지를 잡아요 · 콤보 점수")
+        self.game2_card = GameCard(self, "shooter", GAME2_TITLE, "바라보는 칸으로 이동해 외계인을 막아요 · 윙크 = 수류탄")
         self.game_cards = [self.game1_card, self.game2_card]
         self.game1_card.clicked.connect(lambda: self._on_game(self.game1_card, GAME1_FILE))
         self.game2_card.clicked.connect(lambda: self._on_game(self.game2_card, GAME2_FILE))
@@ -950,8 +996,10 @@ class MenuPanel(QtWidgets.QWidget):
 
     # ── 미니게임 실행 ─────────────────────────────────────────────
     def _on_game(self, card, name):
-        if launch_game(name):
+        proc = launch_game(name)
+        if proc is not None:
             self.close_requested.emit()          # 게임이 뜨면 메뉴창은 닫음
+            self.game_launched.emit(proc, name)  # (순서 중요: 메뉴를 닫은 뒤에 알려야 메뉴 아이콘이 다시 안 뜸)
         else:
             card.set_chip("파일 없음", theme.RED)   # 파일을 못 찾으면 카드에 잠깐 표시
             self._game_timer.start(2500)
