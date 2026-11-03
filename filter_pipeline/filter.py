@@ -152,9 +152,13 @@ DEFAULT_PARAMS = {
     "max_outlier_frames": 4,      # [이상치 유지] 튄 값이면 이 프레임 수만큼 이전 위치 유지, 그래도 계속 멀면 진짜 이동으로 확정
                                   #   ※ 영상 분석(3프레임 이상 이어지는 튐이 통과함) 반영: 2 → 4. 대가: 큰 시선 이동 반영이 약 67ms 늦어짐 (30fps)
     "dcutoff":            1.0,    # 속도 추정용 컷오프 (보통 건드리지 않음)
+    "deadzone_ratio":     0.015,  # [정지 고정] 화면 대각선 대비 이 반경 안에서만 흔들리면 커서를 그 자리에 고정 (0이면 끔)
+                                  #   ※ 한곳을 바라볼 때 천천히 떠다니는 떨림(영상 분석: 100px 안팎)은 평활 필터로 못 잡아서 추가.
+                                  #     1080p 기준 약 33px. 떨림이 남으면 0.02, 반응이 둔하면 0.01 로.
     "gap_reset_sec":      0.5,    # 입력이 이 시간 이상 끊기면 처음부터 다시 시작
 }
 FALLBACK_JUMP_PX = 250.0          # set_screen_size()를 부르기 전에만 쓰는 이상치 거리(px)
+FALLBACK_DEADZONE_PX = 30.0       # set_screen_size()를 부르기 전에만 쓰는 정지 고정 반경(px)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -191,6 +195,12 @@ class GazeStabilizer:
         self.final_x = None
         self.final_y = None
 
+        # 4단계: 정지 고정 (커서가 '줄'에 매달린 것처럼, 반경 안의 흔들림은 무시하고 벗어나면 끌려옴)
+        self.deadzone_ratio = p["deadzone_ratio"]
+        self.deadzone_px = FALLBACK_DEADZONE_PX if self.deadzone_ratio > 0 else 0.0
+        self.anchor_x = None
+        self.anchor_y = None
+
         # 시간 처리
         self.gap_reset_sec = p["gap_reset_sec"]
         self._last_t = None
@@ -201,10 +211,11 @@ class GazeStabilizer:
         """이상치 허용 거리를 화면 대각선 × max_jump_ratio로 맞춤 (해상도가 바뀌어도 같은 느낌)."""
         self._screen = (w, h)
         self.max_jump_distance = self.max_jump_ratio * math.hypot(w, h)
+        self.deadzone_px = self.deadzone_ratio * math.hypot(w, h)
 
     def set_parameters(self, min_cutoff=None, beta=None, ema_alpha=None, max_jump_ratio=None,
                        max_outlier_frames=None, max_jump_distance=None, dcutoff=None,
-                       gap_reset_sec=None, screen_size=None, enabled=None):
+                       gap_reset_sec=None, screen_size=None, enabled=None, deadzone_ratio=None):
         """
         바꾸고 싶은 항목만 넘기면 됨 (None이면 현재 값 유지). 의미는 DEFAULT_PARAMS 주석 참고.
             max_jump_distance: px로 직접 지정 (비율 설정보다 우선)
@@ -233,6 +244,13 @@ class GazeStabilizer:
                 self.set_screen_size(*size)
         if max_jump_distance is not None:
             self.max_jump_distance = float(max_jump_distance)
+        if deadzone_ratio is not None:
+            self.deadzone_ratio = max(0.0, float(deadzone_ratio))
+            size = screen_size or self._screen
+            if size is not None:
+                self.deadzone_px = self.deadzone_ratio * math.hypot(*size)
+            else:
+                self.deadzone_px = FALLBACK_DEADZONE_PX if self.deadzone_ratio > 0 else 0.0
 
     def get_parameters(self):
         """현재 적용 중인 가중치를 dict로 돌려줌 (상태창 표시·로그 기록용)."""
@@ -246,6 +264,8 @@ class GazeStabilizer:
             "max_outlier_frames": self.max_outlier_frames,
             "dcutoff": self.euro_x.dcutoff,
             "gap_reset_sec": self.gap_reset_sec,
+            "deadzone_ratio": self.deadzone_ratio,
+            "deadzone_px": self.deadzone_px,
         }
 
     def reset_parameters(self):
@@ -262,6 +282,7 @@ class GazeStabilizer:
         self.euro_x.reset()
         self.euro_y.reset()
         self.final_x = self.final_y = None
+        self.anchor_x = self.anchor_y = None
         self._last_t = None
 
     def _restart_at(self, x, y):
@@ -271,7 +292,14 @@ class GazeStabilizer:
         self.euro_x.reset(x)
         self.euro_y.reset(y)
         self.final_x, self.final_y = x, y
+        self.anchor_x, self.anchor_y = x, y
         return x, y
+
+    def _current(self):
+        """지금 내보내고 있는 좌표 (정지 고정이 켜져 있으면 앵커, 아니면 필터 결과)."""
+        if self.deadzone_px > 0 and self.anchor_x is not None:
+            return self.anchor_x, self.anchor_y
+        return self.final_x, self.final_y
 
     # ── 본체 ──────────────────────────────────────────────────────
     def update(self, raw_x, raw_y, t=None):
@@ -282,7 +310,7 @@ class GazeStabilizer:
         if not self.enabled:                   # 필터 끔 → 입력을 그대로 돌려줌
             return raw_x, raw_y
         if raw_x is None or raw_y is None:
-            return self.final_x, self.final_y
+            return self._current()
 
         # 프레임 간격: 실제 시각이 있으면 그걸로, 없으면 fps로
         if t is None:
@@ -304,7 +332,7 @@ class GazeStabilizer:
             if dist_sq > self.max_jump_distance ** 2:
                 self.outlier_count += 1
                 if self.outlier_count <= self.max_outlier_frames:
-                    return self.final_x, self.final_y        # 튄 값으로 보고 이전 위치 유지
+                    return self._current()                           # 튄 값으로 보고 이전 위치 유지
                 return self._restart_at(raw_x, raw_y)        # 계속 거기 있음 = 진짜 이동 → 그 위치에서 재시작
             self.outlier_count = 0
         self.prev_valid_x, self.prev_valid_y = raw_x, raw_y
@@ -320,7 +348,21 @@ class GazeStabilizer:
             a = self.ema_alpha
             self.final_x = a * f_x + (1.0 - a) * self.final_x
             self.final_y = a * f_y + (1.0 - a) * self.final_y
-        return self.final_x, self.final_y
+
+        # 4단계: 정지 고정 — 반경 안에서는 앵커(고정점)를 그대로 내보내고,
+        # 반경을 넘으면 앵커가 반경만큼 뒤에서 따라옴 (갑자기 튀지 않고 부드럽게 이어짐)
+        r = self.deadzone_px
+        if r <= 0:
+            return self.final_x, self.final_y
+        if self.anchor_x is None:
+            self.anchor_x, self.anchor_y = self.final_x, self.final_y
+        dx, dy = self.final_x - self.anchor_x, self.final_y - self.anchor_y
+        dist = math.hypot(dx, dy)
+        if dist > r:
+            k = (dist - r) / dist
+            self.anchor_x += dx * k
+            self.anchor_y += dy * k
+        return self.anchor_x, self.anchor_y
 
 
 # ════════════════════════════════════════════════════════════════
