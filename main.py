@@ -9,6 +9,7 @@ main.py — 시선 추적 데모 실행 파일 (두더지 캘리브레이션 →
         python main.py --check         (시작할 때 숫자 맞추기로 정확도 확인 — 새로 보정한 직후에는 자동으로 함)
         python main.py --camera 1 --hd (카메라 번호 / 고해상도 — 원본과 같은 옵션)
 종료:   메뉴창 오른쪽 아래 "종료" 버튼, 캘리브레이션 중 ESC, 또는 터미널에서 Ctrl+C
+단축키: Ctrl + Alt + - 로 메뉴창 열기/닫기 (ui/hotkey.py, "-"는 위쪽·숫자패드 둘 다)
 
 전체 흐름
     1) 카메라 스레드(CameraWorker)가 계속 얼굴 특징값을 보내줍니다.
@@ -68,6 +69,7 @@ from calibration.number_check import NumberCheckWindow
 from ui.seal_cursor import SealCursorOverlay, DEFAULT_OPACITY, OPACITY_STEP, MIN_OPACITY, MAX_OPACITY
 from ui.menu_bar import MenuDock, MenuPanel
 from ui.onscreen_keyboard import OnScreenKeyboard
+from ui.hotkey import MenuHotkey
 
 
 # 게임이 실행되는 동안 시선 커서(도장)까지 숨길 게임 파일 이름. 여기에 없는 게임(예: minigames)은 커서는 보이고
@@ -150,6 +152,8 @@ class DemoApp(QtCore.QObject):
         self.dock.open_requested.connect(self.open_panel)
         self.dock.unlock_requested.connect(self.resume)
         self.dock.scroll_toggle_requested.connect(self.toggle_scroll)
+        self.hotkey = MenuHotkey(self)                  # Ctrl + Alt + - 로 메뉴창 열기/닫기 (진행자용)
+        self.hotkey.pressed.connect(self.toggle_panel)
         self.panel.close_requested.connect(self.close_panel)
         self.panel.transparency_up_requested.connect(lambda: self.change_opacity(-OPACITY_STEP))    # 투명도 + = 진하기 -
         self.panel.transparency_down_requested.connect(lambda: self.change_opacity(+OPACITY_STEP))
@@ -633,6 +637,15 @@ class DemoApp(QtCore.QObject):
         self.panel.show()
         self.panel.place()                      # 화면 가운데에 크게
         self._raise_cursor()
+
+    def toggle_panel(self):
+        """Ctrl + Alt + - : 메뉴창이 열려 있으면 닫고, 닫혀 있으면 엶.
+        캘리브레이션·숫자 맞추기·일시정지·게임 실행 중에는 열지 않음 (그 화면들을 방해하지 않게)."""
+        if self.panel_open:
+            self.close_panel()
+        elif self.tracking_started and not (self.calibrating or getattr(self, "checking", False) or self.paused
+                                            or getattr(self, "game_running", False)):
+            self.open_panel()
 
     def close_panel(self):
         self.panel_open = False
